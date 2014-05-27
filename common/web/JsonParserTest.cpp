@@ -21,7 +21,10 @@
 #include <cppunit/extensions/HelperMacros.h>
 #include <memory>
 #include <string>
+#include <fstream>
 
+#include "ola/Logging.h"
+#include "ola/Clock.h"
 #include "ola/web/Json.h"
 #include "ola/web/JsonLexer.h"
 #include "ola/web/JsonParser.h"
@@ -43,6 +46,7 @@ using std::string;
 
 class JsonParserTest: public CppUnit::TestFixture {
   CPPUNIT_TEST_SUITE(JsonParserTest);
+  /*
   CPPUNIT_TEST(testParseBool);
   CPPUNIT_TEST(testParseNull);
   CPPUNIT_TEST(testParseString);
@@ -51,6 +55,8 @@ class JsonParserTest: public CppUnit::TestFixture {
   CPPUNIT_TEST(testObject);
   CPPUNIT_TEST(testInvalidInput);
   CPPUNIT_TEST(testStressTests);
+  */
+  CPPUNIT_TEST(test);
   CPPUNIT_TEST_SUITE_END();
 
  public:
@@ -62,6 +68,7 @@ class JsonParserTest: public CppUnit::TestFixture {
     void testObject();
     void testInvalidInput();
     void testStressTests();
+    void test();
 };
 
 /**
@@ -617,4 +624,31 @@ void JsonParserTest::testStressTests() {
 
   value.reset(BasicJsonParser::Parse("{ a]b:123}", &error));
   OLA_ASSERT_NULL(value.get());
+}
+
+
+void JsonParserTest::test() {
+  std::ifstream in("testdata/monster.json", std::ios::in);
+  string contents;
+  in.seekg(0, std::ios::end);
+  contents.resize(in.tellg());
+  in.seekg(0, std::ios::beg);
+  in.read(&contents[0], contents.size());
+  in.close();
+
+  OLA_INFO << contents.size();
+  ola::Clock clock;
+  ola::TimeStamp start, end;
+  auto_ptr<const JsonValue> value;
+  string error;
+
+  clock.CurrentTime(&start);
+  value.reset(BasicJsonParser::Parse(contents, &error));
+  clock.CurrentTime(&end);
+
+  ola::TimeInterval diff = end - start;
+  OLA_INFO << "Time was " << diff;
+
+  OLA_ASSERT_NOT_NULL(value.get());
+
 }

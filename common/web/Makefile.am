@@ -13,6 +13,13 @@ dist_noinst_DATA = testdata/allof.test \
                    testdata/schema.json \
                    testdata/strings.test \
                    testdata/type.test
+# lex files
+BUILT_SOURCES = json.yy.cpp
+
+json.yy.cpp: Makefile.am json.lex
+	$(LEX) $(srcdir)/json.lex
+
+CLEANFILES = json.yy.cpp
 
 # LIBRARIES
 ################################################
@@ -23,7 +30,8 @@ libolaweb_la_SOURCES = Json.cpp JsonLexer.cpp JsonParser.cpp JsonPointer.cpp \
                        SchemaErrorLogger.cpp SchemaErrorLogger.h \
                        SchemaKeywords.cpp SchemaKeywords.h \
                        SchemaParseContext.cpp SchemaParseContext.h \
-                       SchemaParser.cpp SchemaParser.h
+                       SchemaParser.cpp SchemaParser.h \
+                       json.yy.cpp LexerGlue.cpp
 
 # TESTS
 ################################################

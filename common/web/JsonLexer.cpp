@@ -32,6 +32,8 @@
 #include "ola/Logging.h"
 #include "ola/StringUtils.h"
 #include "ola/web/Json.h"
+#include "common/web/LexerGlue.h"
+#include "common/web/json.yy.h"
 
 namespace ola {
 namespace web {
@@ -426,6 +428,7 @@ bool ParseRaw(const char *input, JsonParserInterface *parser) {
   return !TrimWhitespace(&input);
 }
 
+/*
 bool JsonLexer::Parse(const std::string &input,
                       JsonParserInterface *parser) {
   // TODO(simon): Do we need to convert to unicode here? I think this may be
@@ -437,6 +440,22 @@ bool JsonLexer::Parse(const std::string &input,
   bool result = ParseRaw(input_data, parser);
   delete[] input_data;
   return result;
+}
+*/
+
+
+bool JsonLexer::Parse(const std::string &input, JsonParserInterface *parser) {
+  LexerGlue glue(parser);
+  yyscan_t scanner;
+  yylex_init_extra(&glue, &scanner);
+  YY_BUFFER_STATE buf = yy_scan_string(input.c_str(), scanner);
+  parser->Begin();
+  //jsonlex(scanner);
+  yylex(scanner);
+  yy_delete_buffer(buf, scanner);
+  parser->End();
+  yylex_destroy(scanner);
+  return true;
 }
 }  // namespace web
 }  // namespace ola
