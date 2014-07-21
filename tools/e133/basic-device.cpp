@@ -36,18 +36,24 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "plugins/e131/e131/RootInflator.h"
 #include "plugins/e131/e131/TCPTransport.h"
+#include "tools/e133/ControllerAgent.h"
+#include "tools/e133/E133DiscoveryAgent.h"
 #include "tools/e133/E133HealthCheckedConnection.h"
 #include "tools/e133/MessageQueue.h"
+#include "tools/e133/TCPConnectionStats.h"
 
-DEFINE_string(controller_ip, "", "The IP Address of the Controller");
-DEFINE_uint16(controller_port, 5569, "The port on the controller");
+DEFINE_string(controller_address, "",
+              "The IP:Port of the controller, if set this bypasses discovery");
 DEFINE_uint16(tcp_connect_timeout_ms, 5000,
               "The time in ms for the TCP connect");
 DEFINE_uint16(tcp_retry_interval_ms, 5000,
               "The time in ms before retring the TCP connection");
+DEFINE_uint16(discovery_startup_delay, 2000,
+              "The time in ms to let DNS-SD run before selecting a controller");
 
 using ola::NewCallback;
 using ola::NewSingleCallback;
@@ -58,6 +64,7 @@ using ola::network::TCPSocket;
 using ola::plugin::e131::IncomingTCPTransport;
 using std::auto_ptr;
 using std::string;
+using std::vector;
 
 /**
  * A very simple E1.33 Device that uses the reverse-connection model.
@@ -67,28 +74,29 @@ class SimpleE133Device {
   struct Options {
     // The controller to connect to.
     IPV4SocketAddress controller;
-
-    explicit Options(const IPV4SocketAddress &controller)
-        : controller(controller) {
-    }
   };
 
   explicit SimpleE133Device(const Options &options);
   ~SimpleE133Device();
 
   void Run();
+  void Start();
   void Stop() { m_ss.Terminate(); }
 
  private:
-  const IPV4SocketAddress m_controller;
+  const IPV4SocketAddress m_static_controller;
   ola::io::SelectServer m_ss;
-
   ola::e133::MessageBuilder m_message_builder;
+  TCPConnectionStats m_tcp_stats;
+  ControllerAgent m_controller_agent;
+
 
   ola::network::TCPSocketFactory m_tcp_socket_factory;
   ola::network::AdvancedTCPConnector m_connector;
   ola::ConstantBackoffPolicy m_backoff_policy;
   ola::plugin::e131::RootInflator m_root_inflator;
+
+  auto_ptr<E133DiscoveryAgentInterface> m_discovery_agent;
 
   // Once we have a connection these are filled in.
   auto_ptr<TCPSocket> m_socket;
@@ -104,13 +112,20 @@ class SimpleE133Device {
   void SocketUnhealthy(IPV4Address ip_address);
   void SocketClosed();
 
+  void ControllerList(
+      std::vector<ControllerAgent::E133ControllerInfo> *controllers);
+
   DISALLOW_COPY_AND_ASSIGN(SimpleE133Device);
 };
 
 
 SimpleE133Device::SimpleE133Device(const Options &options)
-    : m_controller(options.controller),
+    : m_static_controller(options.controller),
       m_message_builder(ola::acn::CID::Generate(), "E1.33 Device"),
+      m_controller_agent(NewCallback(this, &SimpleE133Device::ControllerList),
+                         &m_ss,
+                         &m_message_builder,
+                         &m_tcp_stats),
       m_tcp_socket_factory(NewCallback(this, &SimpleE133Device::OnTCPConnect)),
       m_connector(&m_ss, &m_tcp_socket_factory,
                   TimeInterval(FLAGS_tcp_connect_timeout_ms / 1000,
@@ -119,14 +134,42 @@ SimpleE133Device::SimpleE133Device(const Options &options)
             FLAGS_tcp_retry_interval_ms / 1000,
             (FLAGS_tcp_retry_interval_ms % 1000) * 1000)),
       m_root_inflator(NewCallback(this, &SimpleE133Device::RLPDataReceived)) {
-  m_connector.AddEndpoint(options.controller, &m_backoff_policy);
+  if (!options.controller.Host().IsWildcard()) {
+    m_connector.AddEndpoint(options.controller, &m_backoff_policy);
+  }
+
+  E133DiscoveryAgentFactory discovery_agent_factory;
+  m_discovery_agent.reset(discovery_agent_factory.New());
+  m_discovery_agent->Init();
 }
 
-SimpleE133Device::~SimpleE133Device() {}
+SimpleE133Device::~SimpleE133Device() {
+  m_discovery_agent->Stop();
+}
 
 void SimpleE133Device::Run() {
+  /*
+  m_ss.RegisterSingleTimeout(
+      FLAGS_discovery_startup_delay,
+      NewSingleCallback(this, &SimpleE133Device::ResolveControllers));
+  */
+  m_ss.RegisterSingleTimeout(
+      FLAGS_discovery_startup_delay,
+      NewSingleCallback(this, &SimpleE133Device::Start));
   m_ss.Run();
 }
+
+/*
+void SimpleE133Device::ResolveControllers() {
+  m_discovery_agent->FindControllers(
+      ola::NewSingleCallback(this, &SimpleE133Device::ControllerList));
+}
+*/
+
+void SimpleE133Device::Start() {
+  m_controller_agent.Start();
+}
+
 
 void SimpleE133Device::OnTCPConnect(TCPSocket *socket) {
   OLA_INFO << "Opened new TCP connection: " << socket;
@@ -149,7 +192,8 @@ void SimpleE133Device::OnTCPConnect(TCPSocket *socket) {
 
 
   if (!m_health_checked_connection->Setup()) {
-    OLA_WARN << "Failed to setup heartbeat controller for " << m_controller;
+    OLA_WARN << "Failed to setup heartbeat controller for "
+             << m_static_controller;
     SocketClosed();
     return;
   }
@@ -176,7 +220,32 @@ void SimpleE133Device::SocketClosed() {
   m_in_transport.reset();
   m_ss.RemoveReadDescriptor(m_socket.get());
   m_socket.reset();
-  m_connector.Disconnect(m_controller);
+  m_connector.Disconnect(m_static_controller);
+}
+
+void SimpleE133Device::ControllerList(
+      std::vector<ControllerAgent::E133ControllerInfo> *controllers) {
+  // OLA_INFO << "Got new controller list, size " << controllers.size();
+  if (m_static_controller.Host().IsWildcard()) {
+    // TODO(simon): make this struct common somewhere
+    vector<E133DiscoveryAgentInterface::E133ControllerInfo> e133_controllers;
+    m_discovery_agent->FindControllers(&e133_controllers);
+
+    vector<E133DiscoveryAgentInterface::E133ControllerInfo>::iterator iter =
+      e133_controllers.begin();
+    for (; iter != e133_controllers.end(); ++iter) {
+      ControllerAgent::E133ControllerInfo info;
+      info.address = iter->address;
+      info.priority = iter->priority;
+      controllers->push_back(info);
+    }
+  } else {
+    ControllerAgent::E133ControllerInfo info;
+    info.address = m_static_controller;
+    info.priority = 100;
+    controllers->push_back(info);
+    // controller
+  }
 }
 
 SimpleE133Device *device = NULL;
@@ -195,17 +264,16 @@ int main(int argc, char *argv[]) {
   ola::ParseFlags(&argc, argv);
   ola::InitLoggingFromFlags();
 
-  // Convert the controller's IP address
-  IPV4Address controller_ip;
-  if (FLAGS_controller_ip.str().empty() ||
-      !IPV4Address::FromString(FLAGS_controller_ip, &controller_ip)) {
-    ola::DisplayUsage();
-    exit(ola::EXIT_USAGE);
+  SimpleE133Device::Options options;
+  if (!FLAGS_controller_address.str().empty()) {
+    if (!IPV4SocketAddress::FromString(FLAGS_controller_address.str(),
+                                       &options.controller)) {
+      OLA_WARN << "Invalid --controller-address";
+      exit(ola::EXIT_USAGE);
+    }
   }
 
-  device = new SimpleE133Device(
-      SimpleE133Device::Options(
-          IPV4SocketAddress(controller_ip, FLAGS_controller_port)));
+  device = new SimpleE133Device(options);
 
   ola::InstallSignal(SIGINT, InteruptSignal);
   device->Run();

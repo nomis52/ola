@@ -43,6 +43,8 @@ endif
 # libolae133common
 # Code required by both the controller and device.
 tools_e133_libolae133common_la_SOURCES = \
+    tools/e133/E133DiscoveryAgent.cpp \
+    tools/e133/E133DiscoveryAgent.h \
     tools/e133/E133HealthCheckedConnection.cpp \
     tools/e133/E133HealthCheckedConnection.h \
     tools/e133/E133Receiver.cpp \
@@ -51,6 +53,19 @@ tools_e133_libolae133common_la_SOURCES = \
     tools/e133/MessageQueue.h \
     tools/e133/MessageBuilder.cpp
 tools_e133_libolae133common_la_LIBADD = plugins/e131/e131/libolae131core.la
+
+if HAVE_DNSSD
+tools_e133_libolae133common_la_SOURCES += \
+    tools/e133/BonjourDiscoveryAgent.h \
+    tools/e133/BonjourDiscoveryAgent.cpp
+endif
+
+if HAVE_AVAHI
+tools_e133_libolae133common_la_SOURCES += \
+    tools/e133/AvahiDiscoveryAgent.h \
+    tools/e133/AvahiDiscoveryAgent.cpp
+tools_e133_libolae133common_la_LIBADD += $(avahi_LIBS)
+endif
 
 # libolae133controller
 # Controller side.
@@ -67,6 +82,8 @@ tools_e133_libolae133controller_la_LIBADD = \
 # libolae133device
 # Device side.
 tools_e133_libolae133device_la_SOURCES = \
+    tools/e133/ControllerAgent.cpp \
+    tools/e133/ControllerAgent.h \
     tools/e133/DesignatedControllerConnection.cpp \
     tools/e133/DesignatedControllerConnection.h \
     tools/e133/E133Device.cpp \
@@ -153,7 +170,8 @@ tools_e133_basic_controller_LDADD = common/libolacommon.la \
 tools_e133_basic_device_SOURCES = tools/e133/basic-device.cpp
 tools_e133_basic_device_LDADD = common/libolacommon.la \
                                 plugins/e131/e131/libolaacn.la \
-                                tools/e133/libolae133common.la
+                                tools/e133/libolae133common.la \
+                                tools/e133/libolae133device.la
 
 # TESTS
 ##################################################
