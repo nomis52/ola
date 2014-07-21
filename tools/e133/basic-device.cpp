@@ -48,10 +48,6 @@
 
 DEFINE_string(controller_address, "",
               "The IP:Port of the controller, if set this bypasses discovery");
-DEFINE_uint16(tcp_connect_timeout_ms, 5000,
-              "The time in ms for the TCP connect");
-DEFINE_uint16(tcp_retry_interval_ms, 5000,
-              "The time in ms before retring the TCP connection");
 DEFINE_uint16(discovery_startup_delay, 2000,
               "The time in ms to let DNS-SD run before selecting a controller");
 
@@ -72,7 +68,7 @@ using std::vector;
 class SimpleE133Device {
  public:
   struct Options {
-    // The controller to connect to.
+    // If provided, this overides DNS-SD and specifes controller to connect to.
     IPV4SocketAddress controller;
   };
 
@@ -80,40 +76,22 @@ class SimpleE133Device {
   ~SimpleE133Device();
 
   void Run();
-  void Start();
   void Stop() { m_ss.Terminate(); }
 
  private:
   const IPV4SocketAddress m_static_controller;
+
   ola::io::SelectServer m_ss;
   ola::e133::MessageBuilder m_message_builder;
   TCPConnectionStats m_tcp_stats;
   ControllerAgent m_controller_agent;
 
-
-  ola::network::TCPSocketFactory m_tcp_socket_factory;
-  ola::network::AdvancedTCPConnector m_connector;
-  ola::ConstantBackoffPolicy m_backoff_policy;
-  ola::plugin::e131::RootInflator m_root_inflator;
-
   auto_ptr<E133DiscoveryAgentInterface> m_discovery_agent;
 
-  // Once we have a connection these are filled in.
-  auto_ptr<TCPSocket> m_socket;
-  auto_ptr<MessageQueue> m_message_queue;
-  // The Health Checked connection
-  auto_ptr<E133HealthCheckedConnection> m_health_checked_connection;
-  auto_ptr<IncomingTCPTransport> m_in_transport;
-
-  void OnTCPConnect(TCPSocket *socket);
-  void ReceiveTCPData();
-  void RLPDataReceived(const ola::plugin::e131::TransportHeader &header);
-
-  void SocketUnhealthy(IPV4Address ip_address);
-  void SocketClosed();
+  void ConnectToController();
 
   void ControllerList(
-      std::vector<ControllerAgent::E133ControllerInfo> *controllers);
+      vector<ControllerAgent::E133ControllerInfo> *controllers);
 
   DISALLOW_COPY_AND_ASSIGN(SimpleE133Device);
 };
@@ -125,107 +103,48 @@ SimpleE133Device::SimpleE133Device(const Options &options)
       m_controller_agent(NewCallback(this, &SimpleE133Device::ControllerList),
                          &m_ss,
                          &m_message_builder,
-                         &m_tcp_stats),
-      m_tcp_socket_factory(NewCallback(this, &SimpleE133Device::OnTCPConnect)),
-      m_connector(&m_ss, &m_tcp_socket_factory,
-                  TimeInterval(FLAGS_tcp_connect_timeout_ms / 1000,
-                               (FLAGS_tcp_connect_timeout_ms % 1000) * 1000)),
-      m_backoff_policy(TimeInterval(
-            FLAGS_tcp_retry_interval_ms / 1000,
-            (FLAGS_tcp_retry_interval_ms % 1000) * 1000)),
-      m_root_inflator(NewCallback(this, &SimpleE133Device::RLPDataReceived)) {
-  if (!options.controller.Host().IsWildcard()) {
-    m_connector.AddEndpoint(options.controller, &m_backoff_policy);
+                         &m_tcp_stats) {
+  if (m_static_controller.Host().IsWildcard()) {
+    E133DiscoveryAgentFactory discovery_agent_factory;
+    m_discovery_agent.reset(discovery_agent_factory.New());
+    m_discovery_agent->Init();
   }
-
-  E133DiscoveryAgentFactory discovery_agent_factory;
-  m_discovery_agent.reset(discovery_agent_factory.New());
-  m_discovery_agent->Init();
 }
 
 SimpleE133Device::~SimpleE133Device() {
-  m_discovery_agent->Stop();
+  if (m_discovery_agent.get()) {
+    m_discovery_agent->Stop();
+  }
 }
 
 void SimpleE133Device::Run() {
-  /*
+  if (m_static_controller.Host().IsWildcard()) {
+    m_ss.RegisterSingleTimeout(
+        FLAGS_discovery_startup_delay,
+        NewSingleCallback(this, &SimpleE133Device::ConnectToController));
+  } else {
+    ConnectToController();
+  }
+
   m_ss.RegisterSingleTimeout(
-      FLAGS_discovery_startup_delay,
-      NewSingleCallback(this, &SimpleE133Device::ResolveControllers));
-  */
-  m_ss.RegisterSingleTimeout(
-      FLAGS_discovery_startup_delay,
-      NewSingleCallback(this, &SimpleE133Device::Start));
+      5000,
+      NewSingleCallback(&m_ss, &ola::io::SelectServer::Terminate));
   m_ss.Run();
 }
 
-/*
-void SimpleE133Device::ResolveControllers() {
-  m_discovery_agent->FindControllers(
-      ola::NewSingleCallback(this, &SimpleE133Device::ControllerList));
-}
-*/
-
-void SimpleE133Device::Start() {
+/**
+ * Start the ControllerAgent which will attempt to connect to a controller
+ */
+void SimpleE133Device::ConnectToController() {
   m_controller_agent.Start();
 }
 
-
-void SimpleE133Device::OnTCPConnect(TCPSocket *socket) {
-  OLA_INFO << "Opened new TCP connection: " << socket;
-
-  m_socket.reset(socket);
-  m_in_transport.reset(new IncomingTCPTransport(&m_root_inflator, socket));
-
-  m_message_queue.reset(
-      new MessageQueue(m_socket.get(), &m_ss, m_message_builder.pool()));
-
-  m_health_checked_connection.reset(new E133HealthCheckedConnection(
-      &m_message_builder,
-      m_message_queue.get(),
-      NewSingleCallback(this, &SimpleE133Device::SocketClosed),
-      &m_ss));
-
-  socket->SetOnData(NewCallback(this, &SimpleE133Device::ReceiveTCPData));
-  socket->SetOnClose(NewSingleCallback(this, &SimpleE133Device::SocketClosed));
-  m_ss.AddReadDescriptor(socket);
-
-
-  if (!m_health_checked_connection->Setup()) {
-    OLA_WARN << "Failed to setup heartbeat controller for "
-             << m_static_controller;
-    SocketClosed();
-    return;
-  }
-}
-
-void SimpleE133Device::ReceiveTCPData() {
-  if (!m_in_transport->Receive()) {
-    OLA_WARN << "TCP STREAM IS BAD!!!";
-    SocketClosed();
-  }
-}
-
-void SimpleE133Device::RLPDataReceived(
-    const ola::plugin::e131::TransportHeader &header) {
-  m_health_checked_connection->HeartbeatReceived();
-  (void) header;
-}
-
-void SimpleE133Device::SocketClosed() {
-  OLA_INFO << "controller connection was closed";
-
-  m_health_checked_connection.reset();
-  m_message_queue.reset();
-  m_in_transport.reset();
-  m_ss.RemoveReadDescriptor(m_socket.get());
-  m_socket.reset();
-  m_connector.Disconnect(m_static_controller);
-}
-
+/**
+ * Get the list if controllers, either from the options passed to the
+ * constructor or from the E133DiscoveryAgent.
+ */
 void SimpleE133Device::ControllerList(
-      std::vector<ControllerAgent::E133ControllerInfo> *controllers) {
-  // OLA_INFO << "Got new controller list, size " << controllers.size();
+      vector<ControllerAgent::E133ControllerInfo> *controllers) {
   if (m_static_controller.Host().IsWildcard()) {
     // TODO(simon): make this struct common somewhere
     vector<E133DiscoveryAgentInterface::E133ControllerInfo> e133_controllers;
@@ -244,7 +163,6 @@ void SimpleE133Device::ControllerList(
     info.address = m_static_controller;
     info.priority = 100;
     controllers->push_back(info);
-    // controller
   }
 }
 
