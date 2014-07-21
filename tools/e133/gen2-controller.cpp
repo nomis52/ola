@@ -13,10 +13,11 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * basic-controller.cpp
+ * gen2-controller.cpp
  * Copyright (C) 2014 Simon Newton
  *
- * A controller which just listens for new TCP connections from devices.
+ * A Generation II controller which listens for new TCP connections from
+ * devices.
  * I'm using this for scale testing.
  */
 
@@ -67,7 +68,7 @@ using ola::plugin::e131::IncomingTCPTransport;
 using std::auto_ptr;
 using std::string;
 
-class SimpleE133Controller *controller = NULL;
+class Gen2Controller *controller = NULL;
 
 /**
  * Holds the state for each device
@@ -96,7 +97,7 @@ class DeviceState {
 /**
  * A very simple E1.33 Controller that uses the reverse-connection model.
  */
-class SimpleE133Controller {
+class Gen2Controller {
  public:
   struct Options {
     // The controller to connect to.
@@ -107,8 +108,8 @@ class SimpleE133Controller {
     }
   };
 
-  explicit SimpleE133Controller(const Options &options);
-  ~SimpleE133Controller();
+  explicit Gen2Controller(const Options &options);
+  ~Gen2Controller();
 
   bool Start();
   void Stop() { m_ss.Terminate(); }
@@ -140,23 +141,23 @@ class SimpleE133Controller {
 
   void SocketClosed(IPV4SocketAddress peer);
 
-  DISALLOW_COPY_AND_ASSIGN(SimpleE133Controller);
+  DISALLOW_COPY_AND_ASSIGN(Gen2Controller);
 };
 
-SimpleE133Controller::SimpleE133Controller(const Options &options)
+Gen2Controller::Gen2Controller(const Options &options)
     : m_listen_address(options.controller),
       m_ss(&m_export_map),
       m_tcp_socket_factory(
-          NewCallback(this, &SimpleE133Controller::OnTCPConnect)),
+          NewCallback(this, &Gen2Controller::OnTCPConnect)),
       m_listen_socket(&m_tcp_socket_factory),
       m_message_builder(ola::acn::CID::Generate(), "E1.33 Controller"),
       m_root_inflator(
-          NewCallback(this, &SimpleE133Controller::RLPDataReceived)) {
+          NewCallback(this, &Gen2Controller::RLPDataReceived)) {
 }
 
-SimpleE133Controller::~SimpleE133Controller() {}
+Gen2Controller::~Gen2Controller() {}
 
-bool SimpleE133Controller::Start() {
+bool Gen2Controller::Start() {
   ola::Clock clock;
   clock.CurrentTime(&m_start_time);
 
@@ -168,13 +169,13 @@ bool SimpleE133Controller::Start() {
   m_ss.AddReadDescriptor(&m_listen_socket);
   m_ss.RegisterRepeatingTimeout(
       TimeInterval(0, 500000),
-      NewCallback(this, &SimpleE133Controller::PrintStats));
+      NewCallback(this, &Gen2Controller::PrintStats));
   m_ss.Run();
   m_ss.RemoveReadDescriptor(&m_listen_socket);
   return true;
 }
 
-bool SimpleE133Controller::PrintStats() {
+bool Gen2Controller::PrintStats() {
   const TimeStamp *now = m_ss.WakeUpTime();
   const TimeInterval delay = *now - m_start_time;
   ola::CounterVariable *ss_iterations = m_export_map.GetCounterVar(
@@ -184,7 +185,7 @@ bool SimpleE133Controller::PrintStats() {
   return true;
 }
 
-void SimpleE133Controller::OnTCPConnect(TCPSocket *socket_ptr) {
+void Gen2Controller::OnTCPConnect(TCPSocket *socket_ptr) {
   auto_ptr<TCPSocket> socket(socket_ptr);
 
   GenericSocketAddress generic_peer = socket->GetPeerAddress();
@@ -201,10 +202,10 @@ void SimpleE133Controller::OnTCPConnect(TCPSocket *socket_ptr) {
       new IncomingTCPTransport(&m_root_inflator, socket.get()));
 
   socket->SetOnData(
-      NewCallback(this, &SimpleE133Controller::ReceiveTCPData, peer,
+      NewCallback(this, &Gen2Controller::ReceiveTCPData, peer,
                   device_state->in_transport.get()));
   socket->SetOnClose(
-      NewSingleCallback(this, &SimpleE133Controller::SocketClosed, peer));
+      NewSingleCallback(this, &Gen2Controller::SocketClosed, peer));
 
   device_state->message_queue.reset(
       new MessageQueue(socket.get(), &m_ss, m_message_builder.pool()));
@@ -213,7 +214,7 @@ void SimpleE133Controller::OnTCPConnect(TCPSocket *socket_ptr) {
       new E133HealthCheckedConnection(
           &m_message_builder,
           device_state->message_queue.get(),
-          NewSingleCallback(this, &SimpleE133Controller::SocketUnhealthy, peer),
+          NewSingleCallback(this, &Gen2Controller::SocketUnhealthy, peer),
           &m_ss));
 
   if (!health_checked_connection->Setup()) {
@@ -247,7 +248,7 @@ void SimpleE133Controller::OnTCPConnect(TCPSocket *socket_ptr) {
   }
 }
 
-void SimpleE133Controller::ReceiveTCPData(IPV4SocketAddress peer,
+void Gen2Controller::ReceiveTCPData(IPV4SocketAddress peer,
                                           IncomingTCPTransport *transport) {
   if (!transport->Receive()) {
     OLA_WARN << "TCP STREAM IS BAD!!!";
@@ -255,7 +256,7 @@ void SimpleE133Controller::ReceiveTCPData(IPV4SocketAddress peer,
   }
 }
 
-void SimpleE133Controller::RLPDataReceived(
+void Gen2Controller::RLPDataReceived(
     const ola::plugin::e131::TransportHeader &header) {
   if (header.Transport() != ola::plugin::e131::TransportHeader::TCP)
     return;
@@ -271,12 +272,12 @@ void SimpleE133Controller::RLPDataReceived(
   device_state->health_checked_connection->HeartbeatReceived();
 }
 
-void SimpleE133Controller::SocketUnhealthy(IPV4SocketAddress peer) {
+void Gen2Controller::SocketUnhealthy(IPV4SocketAddress peer) {
   OLA_INFO << "connection to " << peer << " went unhealthy";
   SocketClosed(peer);
 }
 
-void SimpleE133Controller::SocketClosed(IPV4SocketAddress peer) {
+void Gen2Controller::SocketClosed(IPV4SocketAddress peer) {
   OLA_INFO << "Connection to " << peer << " was closed";
 
   auto_ptr<DeviceState> device(ola::STLLookupAndRemovePtr(&m_device_map, peer));
@@ -312,8 +313,8 @@ int main(int argc, char *argv[]) {
   }
 
   ola::InstallSignal(SIGINT, InteruptSignal);
-  controller = new SimpleE133Controller(
-      SimpleE133Controller::Options(
+  controller = new Gen2Controller(
+      Gen2Controller::Options(
           IPV4SocketAddress(controller_ip, FLAGS_listen_port)));
   controller->Start();
   delete controller;

@@ -58,7 +58,7 @@ DNS-SD instead. We also reversed the discovery model, rather than controllers
 discovering devices, the devices would discover the controllers and open a TCP
 connection to one of them.
 
-## basic_device
+## gen2_device
 
 This uses DNS-SD to locate the '_rdmnet-ctrl._tcp' services and looks for the
 key 'priority' in the TXT record. The priority should be between 0 and 100. It
@@ -68,7 +68,7 @@ with the controller with the highest priority.
 The --controller-address argument can be used to override DNS-SD and connect to
 a single controller.
 
-## basic_controller
+## gen2_controller
 
 This listens for TCP connections from devices. It does not yet register with
 DNS-SD.

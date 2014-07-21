@@ -13,10 +13,10 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * basic-device.cpp
+ * gen2-device.cpp
  * Copyright (C) 2014 Simon Newton
  *
- * A device which just opens a TCP connection to a controller.
+ * A Generation II device which opens a TCP connection to a controller.
  * I'm using this for scale testing.
  */
 
@@ -65,15 +65,15 @@ using std::vector;
 /**
  * A very simple E1.33 Device that uses the reverse-connection model.
  */
-class SimpleE133Device {
+class Gen2Device {
  public:
   struct Options {
     // If provided, this overides DNS-SD and specifes controller to connect to.
     IPV4SocketAddress controller;
   };
 
-  explicit SimpleE133Device(const Options &options);
-  ~SimpleE133Device();
+  explicit Gen2Device(const Options &options);
+  ~Gen2Device();
 
   void Run();
   void Stop() { m_ss.Terminate(); }
@@ -93,14 +93,14 @@ class SimpleE133Device {
   void ControllerList(
       vector<ControllerAgent::E133ControllerInfo> *controllers);
 
-  DISALLOW_COPY_AND_ASSIGN(SimpleE133Device);
+  DISALLOW_COPY_AND_ASSIGN(Gen2Device);
 };
 
 
-SimpleE133Device::SimpleE133Device(const Options &options)
+Gen2Device::Gen2Device(const Options &options)
     : m_static_controller(options.controller),
       m_message_builder(ola::acn::CID::Generate(), "E1.33 Device"),
-      m_controller_agent(NewCallback(this, &SimpleE133Device::ControllerList),
+      m_controller_agent(NewCallback(this, &Gen2Device::ControllerList),
                          &m_ss,
                          &m_message_builder,
                          &m_tcp_stats) {
@@ -111,17 +111,17 @@ SimpleE133Device::SimpleE133Device(const Options &options)
   }
 }
 
-SimpleE133Device::~SimpleE133Device() {
+Gen2Device::~Gen2Device() {
   if (m_discovery_agent.get()) {
     m_discovery_agent->Stop();
   }
 }
 
-void SimpleE133Device::Run() {
+void Gen2Device::Run() {
   if (m_static_controller.Host().IsWildcard()) {
     m_ss.RegisterSingleTimeout(
         FLAGS_discovery_startup_delay,
-        NewSingleCallback(this, &SimpleE133Device::ConnectToController));
+        NewSingleCallback(this, &Gen2Device::ConnectToController));
   } else {
     ConnectToController();
   }
@@ -135,7 +135,7 @@ void SimpleE133Device::Run() {
 /**
  * Start the ControllerAgent which will attempt to connect to a controller
  */
-void SimpleE133Device::ConnectToController() {
+void Gen2Device::ConnectToController() {
   m_controller_agent.Start();
 }
 
@@ -143,7 +143,7 @@ void SimpleE133Device::ConnectToController() {
  * Get the list if controllers, either from the options passed to the
  * constructor or from the E133DiscoveryAgent.
  */
-void SimpleE133Device::ControllerList(
+void Gen2Device::ControllerList(
       vector<ControllerAgent::E133ControllerInfo> *controllers) {
   if (m_static_controller.Host().IsWildcard()) {
     // TODO(simon): make this struct common somewhere
@@ -166,7 +166,7 @@ void SimpleE133Device::ControllerList(
   }
 }
 
-SimpleE133Device *device = NULL;
+Gen2Device *device = NULL;
 
 /**
  * Interupt handler
@@ -182,7 +182,7 @@ int main(int argc, char *argv[]) {
   ola::ParseFlags(&argc, argv);
   ola::InitLoggingFromFlags();
 
-  SimpleE133Device::Options options;
+  Gen2Device::Options options;
   if (!FLAGS_controller_address.str().empty()) {
     if (!IPV4SocketAddress::FromString(FLAGS_controller_address.str(),
                                        &options.controller)) {
@@ -191,7 +191,7 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  device = new SimpleE133Device(options);
+  device = new Gen2Device(options);
 
   ola::InstallSignal(SIGINT, InteruptSignal);
   device->Run();
