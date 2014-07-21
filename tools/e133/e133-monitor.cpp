@@ -220,7 +220,6 @@ int main(int argc, char *argv[]) {
 
   PidStoreHelper pid_helper(FLAGS_pid_location, 4);
 
-
   vector<IPV4Address> targets;
   if (!FLAGS_target_addresses.str().empty()) {
     vector<string> tokens;
