@@ -53,6 +53,9 @@ class BonjourE133DiscoveryAgent : public E133DiscoveryAgentInterface {
 
   void FindControllers(std::vector<E133ControllerInfo> *controllers);
 
+  void RegisterController(
+      const ola::network::IPV4SocketAddress &controller_address);
+
   void RunThread();
 
   void BrowseResult(DNSServiceFlags flags,
@@ -68,9 +71,13 @@ class BonjourE133DiscoveryAgent : public E133DiscoveryAgentInterface {
   std::auto_ptr<ola::thread::CallbackThread> m_thread;
   std::auto_ptr<class IOAdapter> m_io_adapter;
   DNSServiceRef m_discovery_service_ref;
+  DNSServiceRef m_registration_ref;
 
   ControllerResolverList m_controllers;
   ola::thread::Mutex m_controllers_mu;
+
+  void InternalRegisterService(
+      ola::network::IPV4SocketAddress controller_address);
 
   DISALLOW_COPY_AND_ASSIGN(BonjourE133DiscoveryAgent);
 };

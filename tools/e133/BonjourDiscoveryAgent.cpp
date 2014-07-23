@@ -26,6 +26,7 @@
 #include <netinet/in.h>
 #include <stdint.h>
 #include <ola/Callback.h>
+#include <ola/base/Flags.h>
 #include <ola/Logging.h>
 #include <ola/network/NetworkUtils.h>
 #include <ola/stl/STLUtils.h>
@@ -39,11 +40,15 @@
 using ola::network::HostToNetwork;
 using ola::network::NetworkToHost;
 using ola::network::IPV4Address;
+using ola::network::IPV4SocketAddress;
 using ola::io::SelectServerInterface;
 using ola::thread::MutexLocker;
 using std::auto_ptr;
 using std::string;
 using std::vector;
+using std::ostringstream;
+
+DECLARE_uint8(controller_priority);
 
 
 // ControllerResolver
@@ -179,6 +184,24 @@ static void ResolveAddressCallback(DNSServiceRef sdRef,
   (void) interface_index;
   (void) address;
   (void) ttl;
+}
+
+static void RegisterCallback(DNSServiceRef service,
+                             DNSServiceFlags flags,
+                             DNSServiceErrorType error_code,
+                             const char *name,
+                             const char *type,
+                             const char *domain,
+                             void *context) {
+  if (error_code != kDNSServiceErr_NoError) {
+    OLA_WARN << "DNSServiceRegister for " << name << "." << type << domain
+             << " returned error " << error_code;
+  } else {
+    OLA_INFO << "Registered: " << name << "." << type << domain;
+  }
+  (void) service;
+  (void) flags;
+  (void) context;
 }
 
 // DNSSDDescriptor
@@ -446,7 +469,8 @@ void ControllerResolver::UpdateAddress(const IPV4Address &v4_address) {
 // BonjourE133DiscoveryAgent
 // ----------------------------------------------------------------------------
 BonjourE133DiscoveryAgent::BonjourE133DiscoveryAgent()
-    : m_io_adapter(new IOAdapter(&m_ss)) {
+    : m_io_adapter(new IOAdapter(&m_ss)),
+      m_registration_ref(NULL) {
 }
 
 BonjourE133DiscoveryAgent::~BonjourE133DiscoveryAgent() {
@@ -466,6 +490,12 @@ bool BonjourE133DiscoveryAgent::Stop() {
     m_ss.Terminate();
     m_thread->Join();
     m_thread.reset();
+  }
+
+  if (m_registration_ref) {
+    m_io_adapter->RemoveDescriptor(m_registration_ref);
+    DNSServiceRefDeallocate(m_registration_ref);
+    m_registration_ref = NULL;
   }
 
   /*
@@ -519,6 +549,13 @@ void BonjourE133DiscoveryAgent::FindControllers(
       controllers->push_back(info);
     }
   }
+}
+
+void BonjourE133DiscoveryAgent::RegisterController(
+    const IPV4SocketAddress &controller) {
+  m_ss.Execute(ola::NewSingleCallback(
+      this,
+      &BonjourE133DiscoveryAgent::InternalRegisterService, controller));
 }
 
 void BonjourE133DiscoveryAgent::RunThread() {
@@ -584,4 +621,39 @@ void BonjourE133DiscoveryAgent::BrowseResult(DNSServiceFlags flags,
     }
     OLA_INFO << "Failed to find " << controller;
   }
+}
+
+void BonjourE133DiscoveryAgent::InternalRegisterService(
+    IPV4SocketAddress controller_address) {
+  ostringstream str;
+  str << "controller-" << controller_address.Port();
+  const string service = str.str();
+  str.str("");
+
+  str << "priority=" << static_cast<int>(FLAGS_controller_priority);
+
+  OLA_INFO << "Adding " << service << " : " << E133_CONTROLLER_SERVICE << ":"
+           << controller_address.Port() << ", txt: " << str.str();
+
+  string txt_data;
+  txt_data.append(1, static_cast<char>(str.str().size()));
+  txt_data.append(str.str());
+
+  DNSServiceErrorType error = DNSServiceRegister(
+      &m_registration_ref,
+      0, 0, service.c_str(), E133_CONTROLLER_SERVICE,
+      NULL,  // default domain
+      NULL,  // use default host name
+      HostToNetwork(controller_address.Port()),
+      txt_data.size(), txt_data.c_str(),
+      &RegisterCallback,  // call back function
+      NULL);  // no context
+
+  if (error != kDNSServiceErr_NoError) {
+    OLA_WARN << "DNSServiceRegister returned " << error;
+    return;
+  }
+
+  // TODO(simon): allow this to be called more than once.
+  m_io_adapter->AddDescriptor(m_registration_ref);
 }

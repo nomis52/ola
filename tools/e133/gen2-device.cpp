@@ -50,6 +50,7 @@ DEFINE_string(controller_address, "",
               "The IP:Port of the controller, if set this bypasses discovery");
 DEFINE_uint16(discovery_startup_delay, 2000,
               "The time in ms to let DNS-SD run before selecting a controller");
+DEFINE_uint16(terminate_after, 0, "The number of ms to wait before exiting");
 
 using ola::NewCallback;
 using ola::NewSingleCallback;
@@ -126,9 +127,11 @@ void Gen2Device::Run() {
     ConnectToController();
   }
 
-  m_ss.RegisterSingleTimeout(
-      5000,
-      NewSingleCallback(&m_ss, &ola::io::SelectServer::Terminate));
+  if (FLAGS_terminate_after) {
+    m_ss.RegisterSingleTimeout(
+        FLAGS_terminate_after,
+        NewSingleCallback(&m_ss, &ola::io::SelectServer::Terminate));
+  }
   m_ss.Run();
 }
 

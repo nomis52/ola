@@ -23,6 +23,8 @@
 #include <config.h>
 #endif
 
+#include <ola/base/Flags.h>
+
 #ifdef HAVE_DNSSD
 #include "tools/e133/BonjourDiscoveryAgent.h"
 #endif
@@ -33,6 +35,9 @@
 
 const char E133DiscoveryAgentInterface::E133_CONTROLLER_SERVICE[] =
     "_rdmnet-ctrl._tcp";
+
+DEFINE_uint8(controller_priority, 50,
+             "The priority to use to register our service with");
 
 E133DiscoveryAgentInterface* E133DiscoveryAgentFactory::New() {
 #ifdef HAVE_DNSSD

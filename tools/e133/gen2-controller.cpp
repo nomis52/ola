@@ -41,6 +41,7 @@
 #include <string>
 #include <utility>
 
+#include "tools/e133/E133DiscoveryAgent.h"
 #include "plugins/e131/e131/RootInflator.h"
 #include "plugins/e131/e131/TCPTransport.h"
 #include "tools/e133/E133HealthCheckedConnection.h"
@@ -112,7 +113,7 @@ class Gen2Controller {
   ~Gen2Controller();
 
   bool Start();
-  void Stop() { m_ss.Terminate(); }
+  void Stop();
 
  private:
   typedef std::map<IPV4SocketAddress, DeviceState*> DeviceMap;
@@ -127,8 +128,9 @@ class Gen2Controller {
   ola::network::TCPAcceptingSocket m_listen_socket;
 
   ola::e133::MessageBuilder m_message_builder;
-
   ola::plugin::e131::RootInflator m_root_inflator;
+
+  auto_ptr<E133DiscoveryAgentInterface> m_discovery_agent;
 
   bool PrintStats();
 
@@ -153,9 +155,16 @@ Gen2Controller::Gen2Controller(const Options &options)
       m_message_builder(ola::acn::CID::Generate(), "E1.33 Controller"),
       m_root_inflator(
           NewCallback(this, &Gen2Controller::RLPDataReceived)) {
+  E133DiscoveryAgentFactory discovery_agent_factory;
+  m_discovery_agent.reset(discovery_agent_factory.New());
+  m_discovery_agent->Init();
 }
 
-Gen2Controller::~Gen2Controller() {}
+Gen2Controller::~Gen2Controller() {
+  if (m_discovery_agent.get()) {
+    m_discovery_agent->Stop();
+  }
+}
 
 bool Gen2Controller::Start() {
   ola::Clock clock;
@@ -165,6 +174,9 @@ bool Gen2Controller::Start() {
     return false;
   }
   OLA_INFO << "Listening on " << m_listen_address;
+  if (m_discovery_agent.get()) {
+    m_discovery_agent->RegisterController(m_listen_address);
+  }
 
   m_ss.AddReadDescriptor(&m_listen_socket);
   m_ss.RegisterRepeatingTimeout(
@@ -173,6 +185,10 @@ bool Gen2Controller::Start() {
   m_ss.Run();
   m_ss.RemoveReadDescriptor(&m_listen_socket);
   return true;
+}
+
+void Gen2Controller::Stop() {
+  m_ss.Terminate();
 }
 
 bool Gen2Controller::PrintStats() {

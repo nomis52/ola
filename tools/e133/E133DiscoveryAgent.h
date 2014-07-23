@@ -68,6 +68,14 @@ class E133DiscoveryAgentInterface {
   virtual void FindControllers(
       std::vector<E133ControllerInfo> *controllers) = 0;
 
+  /**
+   * @brief Register the SocketAddress as an E1.33 controller.
+   *
+   * The current implementation only allows this to be called once.
+   */
+  virtual void RegisterController(
+      const ola::network::IPV4SocketAddress &controller) = 0;
+
   static const char E133_CONTROLLER_SERVICE[];
 };
 

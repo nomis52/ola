@@ -125,7 +125,9 @@ ControllerAgent::~ControllerAgent() {
              << " RDM commands remain un-ack'ed and will not be delivered";
   ola::STLDeleteValues(&m_unacked_messages);
 
-  TCPConnectionClosed();
+  if (m_tcp_socket) {
+    TCPConnectionClosed();
+  }
 
   if (m_discovery_timeout != ola::thread::INVALID_TIMEOUT) {
     m_ss->RemoveTimeout(m_discovery_timeout);
@@ -397,7 +399,7 @@ void ControllerAgent::TCPConnectionUnhealthy() {
  *  - the heartbeats time out
  */
 void ControllerAgent::TCPConnectionClosed() {
-  OLA_INFO << "TCP conection closed";
+  OLA_INFO << "TCP conection closed: " << m_tcp_socket;
 
   // zero out the master's IP
   m_tcp_stats->ip_address = IPV4Address();
@@ -418,6 +420,10 @@ void ControllerAgent::TCPConnectionClosed() {
   m_tcp_socket->Close();
   delete m_tcp_socket;
   m_tcp_socket = NULL;
+
+  m_discovery_timeout = m_ss->RegisterSingleTimeout(
+      TimeInterval(2, 0),
+      NewSingleCallback(this, &ControllerAgent::AttemptConnection));
 }
 
 
