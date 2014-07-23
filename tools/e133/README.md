@@ -81,3 +81,14 @@ To perform scale testing you may need to increase the number of FDs per process.
 > sysctl -w kern.maxfilesperproc=18000
 > ulimit -n 12000
 > ulimit -a  # confirm
+
+## Gen 2 TODO list
+
+* Define a message which includes the IP:Port::UID and send this when a device
+  connects to a controller.
+* Have the controller register using DNS-SD
+* Implement the controller mesh
+* Add the port to the TCP Stats message
+* Implement a controller which finds all devices, then sends a TCP_CONNS_STATS
+  message to each, and check the response matches what we know from the
+  controller mesh.
