@@ -70,8 +70,8 @@ a single controller.
 
 ## gen2_controller
 
-This listens for TCP connections from devices. It does not yet register with
-DNS-SD.
+Registers the E1.33 service with DNS-SD and then listens for TCP connections
+from devices.
 
 To perform scale testing you may need to increase the number of FDs per process.
 
@@ -86,7 +86,6 @@ To perform scale testing you may need to increase the number of FDs per process.
 
 * Define a message which includes the IP:Port::UID and send this when a device
   connects to a controller.
-* Have the controller register using DNS-SD
 * Implement the controller mesh
 * Add the port to the TCP Stats message
 * Implement a controller which finds all devices, then sends a TCP_CONNS_STATS
