@@ -92,7 +92,13 @@ class ControllerMesh {
   void PrintStats();
 
  private:
-  typedef std::vector<class ControllerConnection*> ControllerList;
+  struct ControllerInfo {
+    class ControllerConnection *connection;
+    bool seen;
+  };
+
+  typedef std::vector<ControllerInfo> ControllerList;
+
 
   RefreshControllersCallback *m_controllers_cb;
   const uint16_t m_our_port;
@@ -113,19 +119,7 @@ class ControllerMesh {
 
   bool CheckForNewControllers();
   void OnTCPConnect(ola::network::TCPSocket *socket);
-
-  /*
-  void ReceiveTCPData(
-    ola::plugin::e131::IncomingTCPTransport *m_incoming_tcp_transport);
-  void TCPConnectionUnhealthy(ola::network::IPV4SocketAddress peer_addr);
-  */
   void TCPConnectionClosed(const ola::network::IPV4SocketAddress &peer_addr);
-  // void RLPDataReceived(const ola::plugin::e131::TransportHeader &header);
-
-  /*
-  bool SendRDMCommand(unsigned int sequence_number, uint16_t endpoint,
-                      const ola::rdm::RDMResponse *rdm_response);
-  */
 
   void HandleStatusMessage(
       const ola::plugin::e131::TransportHeader *transport_header,

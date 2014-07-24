@@ -66,8 +66,6 @@ class ControllerConnection {
   bool SetupConnection(ola::network::TCPSocket *socket_ptr,
                        ola::e133::MessageBuilder *message_builder);
 
-  bool seen;  // used to remove old controllers
-
  private:
   ola::network::IPV4SocketAddress m_address;
   ola::io::SelectServerInterface *m_ss;

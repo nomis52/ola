@@ -101,7 +101,7 @@ ControllerMesh::~ControllerMesh() {
 
   ControllerList::iterator iter = m_known_controllers.begin();
   for (; iter != m_known_controllers.end(); ++iter) {
-    delete *iter;
+    delete iter->connection;
   }
 
   if (m_controllers_cb) {
@@ -126,8 +126,9 @@ void ControllerMesh::PrintStats() {
   ControllerList::iterator iter = m_known_controllers.begin();
   std::cout << "------------------" << std::endl;
   for (; iter != m_known_controllers.end(); ++iter) {
-    std::cout << (*iter)->Address() << " : "
-              << ((*iter)->IsConnected() ? "connected" : "disconnected")
+    std::cout << iter->connection->Address() << " : "
+              << (iter->connection->IsConnected() ?
+                  "connected" : "disconnected")
               << std::endl;
   }
   std::cout << "------------------" << std::endl;
@@ -140,7 +141,7 @@ bool ControllerMesh::CheckForNewControllers() {
 
   ControllerList::iterator iter = m_known_controllers.begin();
   for (; iter != m_known_controllers.end(); ++iter) {
-    (*iter)->seen = false;
+    iter->seen = false;
   }
 
   vector<IPV4SocketAddress>::const_iterator c_iter = controllers.begin();
@@ -151,17 +152,27 @@ bool ControllerMesh::CheckForNewControllers() {
       continue;
     }
 
-    ControllerConnection *info = FindControllerConnection(*c_iter);
-    if (!info) {
-      info = new ControllerConnection(
+    iter = m_known_controllers.begin();
+    for (; iter != m_known_controllers.end(); ++iter) {
+      if (iter->connection->Address() == *c_iter) {
+        break;
+      }
+    }
+
+    if (iter == m_known_controllers.end()) {
+      ControllerConnection *connection = new ControllerConnection(
         *c_iter,
         m_ss,
         NewCallback(this, &ControllerMesh::TCPConnectionClosed),
         &m_e133_inflator);
+      ControllerInfo info;
+      info.connection = connection;
+      info.seen = true;
       m_known_controllers.push_back(info);
       m_tcp_connector.AddEndpoint(*c_iter, &m_backoff_policy);
+    } else {
+      iter->seen = true;
     }
-    info->seen = true;
   }
 
   if (!m_known_controllers.empty()) {
@@ -170,12 +181,12 @@ bool ControllerMesh::CheckForNewControllers() {
 
   // Remove any controllers that no longer exist.
   for (iter = m_known_controllers.begin(); iter != m_known_controllers.end();) {
-    if (!(*iter)->seen) {
+    if (!iter->seen) {
       // TODO(simon): handle the case where the connection to the controller is
       // still open.
-      OLA_INFO << "Removed " << (*iter)->Address();
-      m_tcp_connector.RemoveEndpoint((*iter)->Address());
-      delete *iter;
+      OLA_INFO << "Removed " << iter->connection->Address();
+      m_tcp_connector.RemoveEndpoint(iter->connection->Address());
+      delete iter->connection;
       iter = m_known_controllers.erase(iter);
       continue;
     }
@@ -193,146 +204,19 @@ void ControllerMesh::OnTCPConnect(TCPSocket *socket_ptr) {
     return;
   }
   IPV4SocketAddress peer = generic_peer.V4Addr();
-
   OLA_INFO << "Connected to controller at " << peer;
 
   ControllerConnection *info = FindControllerConnection(peer);
-
-  if (!info) {
+  if (info) {
+    info->SetupConnection(socket.release(), m_message_builder);
+  } else {
     OLA_WARN << "Can't find controller for " << peer;
-    return;
-  }
-
-  info->SetupConnection(socket.release(), m_message_builder);
-  return;
-
-  /*
-  if (info->m_tcp_socket) {
-    OLA_WARN << "Already got a TCP connection open, closing the new one";
-    socket->Close();
-    return;
-  }
-
-  info->m_tcp_socket = socket.release();
-  if (info->m_message_queue)
-    OLA_WARN << "Already have a MessageQueue";
-  info->m_message_queue = new MessageQueue(info->m_tcp_socket, m_ss,
-                                           m_message_builder->pool());
-
-  if (info->m_health_checked_connection) {
-    OLA_WARN << "Already have a E133HealthCheckedConnection";
-  }
-
-  info->m_health_checked_connection = new E133HealthCheckedConnection(
-    m_message_builder,
-    info->m_message_queue,
-    ola::NewSingleCallback(
-      this, &ControllerMesh::TCPConnectionUnhealthy, peer),
-    m_ss);
-
-  // this sends a heartbeat message to indicate this is the live connection
-  if (!info->m_health_checked_connection->Setup()) {
-    OLA_WARN << "Failed to setup HealthCheckedConnection, closing TCP socket";
-    delete info->m_health_checked_connection;
-    info->m_health_checked_connection = NULL;
-    delete info->m_message_queue;
-    info->m_message_queue = NULL;
-    info->m_tcp_socket->Close();
-    delete info->m_tcp_socket;
-    info->m_tcp_socket = NULL;
-    return;
-  }
-
-  // TODO(simon): Send the first PDU here that contains our IP:Port:UID info.
-
-  if (info->m_incoming_tcp_transport) {
-    OLA_WARN << "Already have an IncomingTCPTransport";
-  }
-  info->m_incoming_tcp_transport = new ola::plugin::e131::IncomingTCPTransport(
-      &m_root_inflator, info->m_tcp_socket);
-
-  info->m_tcp_socket->SetOnData(
-      NewCallback(this, &ControllerMesh::ReceiveTCPData,
-      info->m_incoming_tcp_transport));
-  info->m_tcp_socket->SetOnClose(ola::NewSingleCallback(
-      this, &ControllerMesh::TCPConnectionClosed, peer));
-  m_ss->AddReadDescriptor(info->m_tcp_socket);
-  */
-}
-
-
-/**
- * Called when there is new TCP data available
-void ControllerMesh::ReceiveTCPData(
-    ola::plugin::e131::IncomingTCPTransport *incoming_tcp_transport) {
-  if (!incoming_tcp_transport->Receive()) {
-    OLA_WARN << "TCP STREAM IS BAD!!!";
-    //CloseTCPConnection();
   }
 }
-
- * Called when the TCP connection goes unhealthy.
-void ControllerMesh::TCPConnectionUnhealthy(IPV4SocketAddress peer_addr) {
-  OLA_INFO << "TCP connection to " << peer_addr << " went unhealthy, closing";
-  ControllerConnection *info = FindControllerConnection(peer_addr);
-
-  (void) info;
-  //CloseTCPConnection();
-}
-*/
 
 void ControllerMesh::TCPConnectionClosed(const IPV4SocketAddress &peer_addr) {
   m_tcp_connector.Disconnect(peer_addr);
 }
-
-  /*
-  m_ss->RemoveReadDescriptor(info->m_tcp_socket);
-
-  // shutdown the tx side
-  delete info->m_health_checked_connection;
-  info->m_health_checked_connection = NULL;
-
-  delete info->m_message_queue;
-  info->m_message_queue = NULL;
-
-  // shutdown the rx side
-  delete info->m_incoming_tcp_transport;
-  info->m_incoming_tcp_transport = NULL;
-
-  // finally delete the socket
-  info->m_tcp_socket->Close();
-  delete info->m_tcp_socket;
-  info->m_tcp_socket = NULL;
-  */
-
-/**
- * Called when we receive a valid Root Layer PDU.
-void ControllerMesh::RLPDataReceived(const TransportHeader&) {
-  if (m_health_checked_connection) {
-    m_health_checked_connection->HeartbeatReceived();
-  }
-}
-  */
-
-/*
-bool ControllerMesh::SendRDMCommand(
-    unsigned int sequence_number,
-    uint16_t endpoint,
-    const RDMResponse *rdm_response) {
-  if (m_message_queue->LimitReached())
-    return false;
-
-  IOStack packet(m_message_builder->pool());
-  ola::rdm::RDMCommandSerializer::Write(*rdm_response, &packet);
-  ola::plugin::e131::RDMPDU::PrependPDU(&packet);
-  m_message_builder->BuildTCPRootE133(
-      &packet, ola::acn::VECTOR_FRAMING_RDMNET, sequence_number,
-      endpoint);
-
-  return m_message_queue->SendMessage(&packet);
-}
-*/
-
 
 /**
  * Handle a E1.33 Status PDU on the TCP connection.
@@ -376,8 +260,8 @@ ControllerConnection *ControllerMesh::FindControllerConnection(
     const IPV4SocketAddress &peer_addr) {
   ControllerList::iterator iter = m_known_controllers.begin();
   for (; iter != m_known_controllers.end(); ++iter) {
-    if ((*iter)->Address() == peer_addr) {
-      return *iter;
+    if (iter->connection->Address() == peer_addr) {
+      return iter->connection;
     }
   }
   return NULL;
