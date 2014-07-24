@@ -32,6 +32,7 @@
 #include <ola/base/SysExits.h>
 #include <ola/e133/MessageBuilder.h>
 #include <ola/io/SelectServer.h>
+#include <ola/io/StdinHandler.h>
 #include <ola/network/TCPSocketFactory.h>
 #include <ola/stl/STLUtils.h>
 #include <signal.h>
@@ -69,6 +70,8 @@ using ola::network::IPV4SocketAddress;
 using ola::network::TCPSocket;
 using ola::plugin::e131::IncomingTCPTransport;
 using std::auto_ptr;
+using std::cout;
+using std::endl;
 using std::string;
 using std::vector;
 
@@ -135,6 +138,12 @@ class Gen2Controller {
 
   auto_ptr<ControllerMesh> m_controller_mesh;
 
+  ola::io::StdinHandler m_stdin_handler;
+
+  void ShowHelp();
+
+  void Input(char c);
+
   void GetControllerList(vector<IPV4SocketAddress> *controllers);
 
   bool PrintStats();
@@ -160,7 +169,9 @@ Gen2Controller::Gen2Controller(const Options &options)
       m_message_builder(ola::acn::CID::Generate(), "E1.33 Controller"),
       m_root_inflator(
           NewCallback(this, &Gen2Controller::RLPDataReceived)),
-      m_controller_mesh(NULL) {
+      m_controller_mesh(NULL),
+      m_stdin_handler(&m_ss,
+                      ola::NewCallback(this, &Gen2Controller::Input)) {
   E133DiscoveryAgentFactory discovery_agent_factory;
   m_discovery_agent.reset(discovery_agent_factory.New());
   m_discovery_agent->Init();
@@ -193,6 +204,7 @@ bool Gen2Controller::Start() {
   m_ss.RegisterRepeatingTimeout(
       TimeInterval(0, 500000),
       NewCallback(this, &Gen2Controller::PrintStats));
+    ShowHelp();
   m_ss.Run();
   m_ss.RemoveReadDescriptor(&m_listen_socket);
   return true;
@@ -211,6 +223,30 @@ void Gen2Controller::GetControllerList(
     e133_controllers.begin();
   for (; iter != e133_controllers.end(); ++iter) {
     controllers->push_back(iter->address);
+  }
+}
+
+void Gen2Controller::ShowHelp() {
+  cout << "------------------" << endl;
+  cout << "c - Show controller State." << endl;
+  cout << "h - Show this message." << endl;
+  cout << "q - Quit." << endl;
+  cout << "------------------" << endl;
+}
+
+void Gen2Controller::Input(char c) {
+  switch (c) {
+    case 'c':
+      m_controller_mesh->PrintStats();
+      break;
+    case 'h':
+      ShowHelp();
+      break;
+    case 'q':
+      m_ss.Terminate();
+      break;
+    default:
+      break;
   }
 }
 

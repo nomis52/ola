@@ -73,6 +73,8 @@ a single controller.
 Registers the E1.33 service with DNS-SD and then listens for TCP connections
 from devices.
 
+It also forms the TCP mesh with any other controllers it discovers.
+
 To perform scale testing you may need to increase the number of FDs per process.
 
 ### Mac:

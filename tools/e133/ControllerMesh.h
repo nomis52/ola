@@ -89,6 +89,8 @@ class ControllerMesh {
    */
   bool Start();
 
+  void PrintStats();
+
  private:
   typedef std::vector<class ControllerConnection*> ControllerList;
 

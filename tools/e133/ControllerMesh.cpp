@@ -122,6 +122,17 @@ bool ControllerMesh::Start() {
   return true;
 }
 
+void ControllerMesh::PrintStats() {
+  ControllerList::iterator iter = m_known_controllers.begin();
+  std::cout << "------------------" << std::endl;
+  for (; iter != m_known_controllers.end(); ++iter) {
+    std::cout << (*iter)->Address() << " : "
+              << ((*iter)->IsConnected() ? "connected" : "disconnected")
+              << std::endl;
+  }
+  std::cout << "------------------" << std::endl;
+}
+
 bool ControllerMesh::CheckForNewControllers() {
   vector<IPV4SocketAddress> controllers;
   m_controllers_cb->Run(&controllers);
