@@ -40,7 +40,8 @@ class ManagementEndpoint: public E133Endpoint {
                        const EndpointProperties &properties,
                        const ola::rdm::UID &uid,
                        const class EndpointManager *endpoint_manager,
-                       class TCPConnectionStats *tcp_stats);
+                       class TCPConnectionStats *tcp_stats,
+                       bool use_new_comms_status = false);
     ~ManagementEndpoint() {}
 
     void SendRDMRequest(const RDMRequest *request, RDMCallback *on_complete);
@@ -69,6 +70,7 @@ class ManagementEndpoint: public E133Endpoint {
     const ola::rdm::UID m_uid;
     const class EndpointManager *m_endpoint_manager;
     class TCPConnectionStats *m_tcp_stats;
+    bool m_use_new_comms_status;
     DiscoverableRDMControllerInterface *m_controller;
 
     // RDM PID handlers.
