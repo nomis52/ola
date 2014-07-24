@@ -40,12 +40,14 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "tools/e133/E133DiscoveryAgent.h"
 #include "plugins/e131/e131/RootInflator.h"
 #include "plugins/e131/e131/TCPTransport.h"
 #include "tools/e133/E133HealthCheckedConnection.h"
 #include "tools/e133/MessageQueue.h"
+#include "tools/e133/ControllerMesh.h"
 
 DEFINE_string(listen_ip, "", "The IP Address to listen on");
 DEFINE_uint16(listen_port, 5569, "The port to listen on");
@@ -68,8 +70,7 @@ using ola::network::TCPSocket;
 using ola::plugin::e131::IncomingTCPTransport;
 using std::auto_ptr;
 using std::string;
-
-class Gen2Controller *controller = NULL;
+using std::vector;
 
 /**
  * Holds the state for each device
@@ -132,6 +133,10 @@ class Gen2Controller {
 
   auto_ptr<E133DiscoveryAgentInterface> m_discovery_agent;
 
+  auto_ptr<ControllerMesh> m_controller_mesh;
+
+  void GetControllerList(vector<IPV4SocketAddress> *controllers);
+
   bool PrintStats();
 
   void OnTCPConnect(TCPSocket *socket);
@@ -154,7 +159,8 @@ Gen2Controller::Gen2Controller(const Options &options)
       m_listen_socket(&m_tcp_socket_factory),
       m_message_builder(ola::acn::CID::Generate(), "E1.33 Controller"),
       m_root_inflator(
-          NewCallback(this, &Gen2Controller::RLPDataReceived)) {
+          NewCallback(this, &Gen2Controller::RLPDataReceived)),
+      m_controller_mesh(NULL) {
   E133DiscoveryAgentFactory discovery_agent_factory;
   m_discovery_agent.reset(discovery_agent_factory.New());
   m_discovery_agent->Init();
@@ -178,6 +184,11 @@ bool Gen2Controller::Start() {
     m_discovery_agent->RegisterController(m_listen_address);
   }
 
+  m_controller_mesh.reset(new ControllerMesh(
+        NewCallback(this, &Gen2Controller::GetControllerList),
+        &m_ss, &m_message_builder, m_listen_address.Port()));
+  m_controller_mesh->Start();
+
   m_ss.AddReadDescriptor(&m_listen_socket);
   m_ss.RegisterRepeatingTimeout(
       TimeInterval(0, 500000),
@@ -191,13 +202,27 @@ void Gen2Controller::Stop() {
   m_ss.Terminate();
 }
 
+void Gen2Controller::GetControllerList(
+    vector<IPV4SocketAddress> *controllers) {
+  vector<E133DiscoveryAgentInterface::E133ControllerInfo> e133_controllers;
+  m_discovery_agent->FindControllers(&e133_controllers);
+
+  vector<E133DiscoveryAgentInterface::E133ControllerInfo>::iterator iter =
+    e133_controllers.begin();
+  for (; iter != e133_controllers.end(); ++iter) {
+    controllers->push_back(iter->address);
+  }
+}
+
 bool Gen2Controller::PrintStats() {
+  /*
   const TimeStamp *now = m_ss.WakeUpTime();
   const TimeInterval delay = *now - m_start_time;
   ola::CounterVariable *ss_iterations = m_export_map.GetCounterVar(
       "ss-loop-count");
   OLA_INFO << delay << "," << m_device_map.size() << ","
       << ss_iterations->Value();
+  */
   return true;
 }
 
@@ -305,6 +330,9 @@ void Gen2Controller::SocketClosed(IPV4SocketAddress peer) {
 
   m_ss.RemoveReadDescriptor(device->socket.get());
 }
+
+class Gen2Controller *controller = NULL;
+
 
 /**
  * Interupt handler

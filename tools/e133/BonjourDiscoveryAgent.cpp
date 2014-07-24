@@ -165,9 +165,6 @@ static void ResolveAddressCallback(DNSServiceRef sdRef,
   ControllerResolver *controller_resolver =
       reinterpret_cast<ControllerResolver*>(context);
 
-  OLA_INFO << "got result for " << hostname << ", error " << errorCode;
-  (void) controller_resolver;
-
   if (address->sa_family != AF_INET) {
     OLA_WARN << "Got wrong address family for " << hostname << ", was "
              << address->sa_family;
@@ -178,7 +175,7 @@ static void ResolveAddressCallback(DNSServiceRef sdRef,
       reinterpret_cast<const struct sockaddr_in*>(address);
   controller_resolver->UpdateAddress(IPV4Address(v4_addr->sin_addr.s_addr));
 
-
+  (void) errorCode;
   (void) sdRef;
   (void) flags;
   (void) interface_index;
@@ -453,7 +450,6 @@ void ControllerResolver::ResolveHandler(
       reinterpret_cast<void*>(this));
 
   if (error == kDNSServiceErr_NoError) {
-    OLA_INFO << "result was good";
     m_io_adapter->AddDescriptor(m_to_addr_ref);
   } else {
     OLA_WARN << "DNSServiceGetAddrInfo for " << m_host_target

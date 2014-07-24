@@ -36,6 +36,7 @@
 #include "plugins/e131/e131/E133StatusInflator.h"
 #include "plugins/e131/e131/RDMPDU.h"
 #include "tools/e133/ControllerMesh.h"
+#include "tools/e133/ControllerConnection.h"
 #include "tools/e133/E133HealthCheckedConnection.h"
 #include "tools/e133/TCPConnectionStats.h"
 
@@ -63,139 +64,6 @@ const int16_t ControllerMesh::CONNECT_FAILURE_PENALTY = 200;
 const TimeInterval ControllerMesh::INITIAL_TCP_RETRY_DELAY(5, 0);
 // we grow the retry interval to a max of 30 seconds
 const TimeInterval ControllerMesh::MAX_TCP_RETRY_DELAY(30, 0);
-
-/**
- * Handles the health checked connection to a controller
- */
-class ControllerConnection {
- public:
-  typedef ola::Callback1<void, const IPV4SocketAddress &> CloseCallback;
-
-  ControllerConnection(const ola::network::IPV4SocketAddress &address,
-                       ola::io::SelectServerInterface *ss,
-                       CloseCallback *close_callback,
-                       ola::plugin::e131::E133Inflator *m_e133_inflator)
-      : m_address(address),
-        m_ss(ss),
-        m_close_callback(close_callback),
-        m_root_inflator(
-            NewCallback(this, &ControllerConnection::RLPDataReceived)) {
-    m_root_inflator.AddInflator(m_e133_inflator);
-  }
-
-  ~ControllerConnection() {
-    if (m_tcp_socket.get()) {
-      CloseConnection();
-    }
-  }
-
-  const IPV4SocketAddress& Address() const {
-    return m_address;
-  }
-
-  bool IsConnected() const {
-    return m_tcp_socket.get() != NULL;
-  }
-
-  /**
-   * @param socket the new TCPSocket, ownership is transferred.
-   */
-  bool SetupConnection(TCPSocket *socket_ptr,
-                       ola::e133::MessageBuilder *message_builder) {
-    if (m_tcp_socket.get()) {
-      OLA_WARN << "Already got a TCP connection open, closing the new one";
-      delete socket_ptr;
-      return false;
-    }
-
-    m_tcp_socket.reset(socket_ptr);
-
-    if (m_message_queue.get())
-      OLA_WARN << "Already have a MessageQueue";
-    m_message_queue.reset(new MessageQueue(m_tcp_socket.get(), m_ss,
-                                           message_builder->pool()));
-
-    if (m_health_checked_connection.get()) {
-      OLA_WARN << "Already have a E133HealthCheckedConnection";
-    }
-    m_health_checked_connection.reset(new E133HealthCheckedConnection(
-      message_builder,
-      m_message_queue.get(),
-      ola::NewSingleCallback(this, &ControllerConnection::ConnectionUnhealthy),
-      m_ss));
-
-    // this sends a heartbeat message to indicate this is the live connection
-    if (!m_health_checked_connection->Setup()) {
-      OLA_WARN << "Failed to setup HealthCheckedConnection, closing TCP socket";
-      m_health_checked_connection.reset();
-      m_message_queue.reset();
-      m_tcp_socket.reset();
-      return false;
-    }
-
-    // TODO(simon): Send the first PDU here that contains our IP:Port:UID info.
-
-    if (m_incoming_tcp_transport.get()) {
-      OLA_WARN << "Already have an IncomingTCPTransport";
-    }
-    m_incoming_tcp_transport.reset(new ola::plugin::e131::IncomingTCPTransport(
-        &m_root_inflator, m_tcp_socket.get()));
-
-    m_tcp_socket->SetOnData(
-      NewCallback(this, &ControllerConnection::ReceiveTCPData));
-    m_tcp_socket->SetOnClose(
-      NewSingleCallback(this, &ControllerConnection::CloseConnection));
-    m_ss->AddReadDescriptor(m_tcp_socket.get());
-    return true;
-  }
-
-  bool seen;  // used to remove old controllers
-
- private:
-  ola::network::IPV4SocketAddress m_address;
-  ola::io::SelectServerInterface *m_ss;
-  CloseCallback *m_close_callback;
-  ola::plugin::e131::RootInflator m_root_inflator;
-
-  auto_ptr<TCPSocket> m_tcp_socket;
-  auto_ptr<E133HealthCheckedConnection> m_health_checked_connection;
-  auto_ptr<MessageQueue> m_message_queue;
-  auto_ptr<ola::plugin::e131::IncomingTCPTransport> m_incoming_tcp_transport;
-
-  void CloseConnection() {
-    OLA_INFO << "Closing TCP conection to " << m_address;
-    m_ss->RemoveReadDescriptor(m_tcp_socket.get());
-
-    // shutdown the tx side
-    m_health_checked_connection.reset();
-    m_message_queue.reset();
-    m_incoming_tcp_transport.reset();
-
-    // finally delete the socket
-    m_tcp_socket.reset();
-
-    m_close_callback->Run(m_address);
-  }
-
-  void ConnectionUnhealthy() {
-    OLA_INFO << "Connection to " << m_address << " went unhealthy.";
-    CloseConnection();
-  }
-
-  void ReceiveTCPData() {
-    if (!m_incoming_tcp_transport->Receive()) {
-      OLA_WARN << "TCP stream to " << m_address << " is bad";
-      CloseConnection();
-    }
-  }
-
-  void RLPDataReceived(const TransportHeader&) {
-    if (m_health_checked_connection.get()) {
-      m_health_checked_connection->HeartbeatReceived();
-    }
-  }
-};
-
 
 /**
  * Create a new ControllerMesh.
@@ -227,7 +95,6 @@ ControllerMesh::ControllerMesh(
 }
 
 ControllerMesh::~ControllerMesh() {
-
   if (m_discovery_timeout != ola::thread::INVALID_TIMEOUT) {
     m_ss->RemoveTimeout(m_discovery_timeout);
   }

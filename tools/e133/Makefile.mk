@@ -70,6 +70,10 @@ endif
 # libolae133controller
 # Controller side.
 tools_e133_libolae133controller_la_SOURCES = \
+    tools/e133/ControllerConnection.cpp \
+    tools/e133/ControllerConnection.h \
+    tools/e133/ControllerMesh.cpp \
+    tools/e133/ControllerMesh.h \
     tools/e133/DeviceManager.cpp \
     tools/e133/DeviceManagerImpl.cpp \
     tools/e133/DeviceManagerImpl.h
@@ -165,7 +169,8 @@ tools_e133_slp_sa_test_LDADD = common/libolacommon.la \
 tools_e133_gen2_controller_SOURCES = tools/e133/gen2-controller.cpp
 tools_e133_gen2_controller_LDADD = common/libolacommon.la \
                                    plugins/e131/e131/libolaacn.la \
-                                   tools/e133/libolae133common.la
+                                   tools/e133/libolae133common.la \
+                                   tools/e133/libolae133controller.la
 
 tools_e133_gen2_device_SOURCES = tools/e133/gen2-device.cpp
 tools_e133_gen2_device_LDADD = common/libolacommon.la \

@@ -53,6 +53,9 @@
  * The controller(s) are located by the refesh_controllers callback. This is
  * usually called when a connection fails, or when periodically as we're trying
  * to locate controllers.
+ *
+ * This doesn't implement the two-way connection resolution, so for now we have
+ * two TCP connections to each controller (one initiated by each end).
  */
 class ControllerMesh {
  public:
@@ -115,7 +118,7 @@ class ControllerMesh {
   void TCPConnectionUnhealthy(ola::network::IPV4SocketAddress peer_addr);
   */
   void TCPConnectionClosed(const ola::network::IPV4SocketAddress &peer_addr);
-  //void RLPDataReceived(const ola::plugin::e131::TransportHeader &header);
+  // void RLPDataReceived(const ola::plugin::e131::TransportHeader &header);
 
   /*
   bool SendRDMCommand(unsigned int sequence_number, uint16_t endpoint,
