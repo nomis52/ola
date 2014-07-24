@@ -89,6 +89,8 @@ class ControllerMesh {
    */
   bool Start();
 
+  unsigned int ConnectedControllerCount();
+
   void PrintStats();
 
  private:

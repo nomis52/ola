@@ -141,6 +141,8 @@ class Gen2Controller {
   ola::io::StdinHandler m_stdin_handler;
 
   void ShowHelp();
+  void ShowDevices();
+  void ShowSummary();
 
   void Input(char c);
 
@@ -228,9 +230,28 @@ void Gen2Controller::GetControllerList(
 
 void Gen2Controller::ShowHelp() {
   cout << "------------------" << endl;
-  cout << "c - Show controller State." << endl;
+  cout << "c - Show peer controllers." << endl;
+  cout << "d - Show devices." << endl;
   cout << "h - Show this message." << endl;
+  cout << "s - Show summary." << endl;
   cout << "q - Quit." << endl;
+  cout << "------------------" << endl;
+}
+
+void Gen2Controller::ShowDevices() {
+  cout << "------------------" << endl;
+  DeviceMap::const_iterator iter = m_device_map.begin();
+  for (; iter != m_device_map.end(); ++iter) {
+    cout << iter->first << endl;
+  }
+  cout << "------------------" << endl;
+}
+
+void Gen2Controller::ShowSummary() {
+  cout << "------------------" << endl;
+  cout << m_controller_mesh->ConnectedControllerCount()
+       << " controllers connected" << endl;
+  cout << m_device_map.size() << " devices connected" << endl;
   cout << "------------------" << endl;
 }
 
@@ -239,11 +260,17 @@ void Gen2Controller::Input(char c) {
     case 'c':
       m_controller_mesh->PrintStats();
       break;
+    case 'd':
+      ShowDevices();
+      break;
     case 'h':
       ShowHelp();
       break;
     case 'q':
       m_ss.Terminate();
+      break;
+    case 's':
+      ShowSummary();
       break;
     default:
       break;
@@ -326,7 +353,7 @@ void Gen2Controller::OnTCPConnect(TCPSocket *socket_ptr) {
 }
 
 void Gen2Controller::ReceiveTCPData(IPV4SocketAddress peer,
-                                          IncomingTCPTransport *transport) {
+                                    IncomingTCPTransport *transport) {
   if (!transport->Receive()) {
     OLA_WARN << "TCP STREAM IS BAD!!!";
     SocketClosed(peer);

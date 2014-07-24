@@ -122,6 +122,17 @@ bool ControllerMesh::Start() {
   return true;
 }
 
+unsigned int ControllerMesh::ConnectedControllerCount() {
+  unsigned int count = 0;
+  ControllerList::iterator iter = m_known_controllers.begin();
+  for (; iter != m_known_controllers.end(); ++iter) {
+    if (iter->connection->IsConnected()) {
+      count++;
+    }
+  }
+  return count;
+}
+
 void ControllerMesh::PrintStats() {
   ControllerList::iterator iter = m_known_controllers.begin();
   std::cout << "------------------" << std::endl;
