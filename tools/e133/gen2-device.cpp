@@ -24,14 +24,21 @@
 #include <ola/base/Flags.h>
 #include <ola/base/Init.h>
 #include <ola/base/SysExits.h>
+#include <ola/rdm/UID.h>
 #include <signal.h>
+
+#include <memory>
 
 #include "tools/e133/Gen2E133Device.h"
 
 DEFINE_string(controller_address, "",
               "The IP:Port of the controller, if set this bypasses discovery");
+DEFINE_string(uid, "7a70:00000001", "The UID of the responder.");
+
+DEFINE_uint16(udp_port, 0, "The port to listen on");
 
 using ola::network::IPV4SocketAddress;
+using ola::rdm::UID;
 
 Gen2Device *device = NULL;
 
@@ -49,7 +56,16 @@ int main(int argc, char *argv[]) {
   ola::ParseFlags(&argc, argv);
   ola::InitLoggingFromFlags();
 
-  Gen2Device::Options options;
+  std::auto_ptr<UID> uid(UID::FromString(FLAGS_uid));
+  if (!uid.get()) {
+    OLA_WARN << "Invalid UID: " << FLAGS_uid;
+    ola::DisplayUsage();
+    exit(ola::EXIT_USAGE);
+  }
+
+  Gen2Device::Options options(*uid);
+  options.port = FLAGS_udp_port;
+
   if (!FLAGS_controller_address.str().empty()) {
     if (!IPV4SocketAddress::FromString(FLAGS_controller_address.str(),
                                        &options.controller)) {
@@ -61,7 +77,9 @@ int main(int argc, char *argv[]) {
   device = new Gen2Device(options);
 
   ola::InstallSignal(SIGINT, InteruptSignal);
-  device->Run();
+  if (!device->Run()) {
+    OLA_WARN << "Failed to start device";
+  }
   delete device;
   device = NULL;
 }

@@ -24,13 +24,22 @@
 
 #include <ola/e133/MessageBuilder.h>
 #include <ola/io/SelectServer.h>
+#include <ola/network/Socket.h>
+#include <ola/rdm/UID.h>
 
 #include <memory>
+#include <string>
 #include <vector>
 
+#include "plugins/e131/e131/UDPTransport.h"
+#include "plugins/e131/e131/E133Inflator.h"
+#include "plugins/e131/e131/RDMInflator.h"
+#include "plugins/e131/e131/RootInflator.h"
 #include "tools/e133/ControllerAgent.h"
 #include "tools/e133/E133DiscoveryAgent.h"
 #include "tools/e133/E133HealthCheckedConnection.h"
+#include "tools/e133/EndpointManager.h"
+#include "tools/e133/ManagementEndpoint.h"
 #include "tools/e133/TCPConnectionStats.h"
 
 /**
@@ -41,28 +50,66 @@ class Gen2Device {
   struct Options {
     // If provided, this overides DNS-SD and specifes controller to connect to.
     ola::network::IPV4SocketAddress controller;
+    ola::rdm::UID uid;
+    uint16_t port;
+
+    explicit Options(const ola::rdm::UID &uid) : uid(uid), port(0) {}
   };
 
   explicit Gen2Device(const Options &options);
   ~Gen2Device();
 
-  void Run();
+  bool Run();
   void Stop() { m_ss.Terminate(); }
 
+  // Ownership not passed.
+  void AddEndpoint(uint16_t endpoint_id, E133Endpoint *endpoint);
+  void RemoveEndpoint(uint16_t endpoint_id);
+
  private:
-  const ola::network::IPV4SocketAddress m_static_controller;
+  const Options m_options;
 
   ola::io::SelectServer m_ss;
   ola::e133::MessageBuilder m_message_builder;
   TCPConnectionStats m_tcp_stats;
-  ControllerAgent m_controller_agent;
+  EndpointManager m_endpoint_manager;
+  ManagementEndpoint m_management_endpoint;
 
+  // Network members
+  ola::network::UDPSocket m_udp_socket;
+  ola::plugin::e131::IncomingUDPTransport m_incoming_udp_transport;
+
+  // inflators
+  ola::plugin::e131::RootInflator m_root_inflator;
+  ola::plugin::e131::E133Inflator m_e133_inflator;
+  ola::plugin::e131::RDMInflator m_rdm_inflator;
+
+  // Discovery & Controller connections
   std::auto_ptr<E133DiscoveryAgentInterface> m_discovery_agent;
+  ControllerAgent m_controller_agent;
 
   void ConnectToController();
 
   void ControllerList(
       std::vector<ControllerAgent::E133ControllerInfo> *controllers);
+
+  void EndpointRequest(
+      const ola::plugin::e131::TransportHeader *transport_header,
+      const ola::plugin::e131::E133Header *e133_header,
+      const string &raw_request);
+
+  void EndpointRequestComplete(ola::network::IPV4SocketAddress target,
+                               uint32_t sequence_number,
+                               uint16_t endpoint_id,
+                               ola::rdm::rdm_response_code response_code,
+                               const ola::rdm::RDMResponse *response,
+                               const std::vector<string> &packets);
+
+  void SendStatusMessage(const ola::network::IPV4SocketAddress target,
+                         uint32_t sequence_number,
+                         uint16_t endpoint_id,
+                         ola::e133::E133StatusCode status_code,
+                         const string &description);
 
   DISALLOW_COPY_AND_ASSIGN(Gen2Device);
 };

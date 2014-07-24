@@ -86,6 +86,9 @@ const ola::rdm::ResponderOps<ManagementEndpoint>::ParamHandler
   { ola::rdm::PID_TCP_COMMS_STATUS,
     &ManagementEndpoint::GetTCPCommsStatus,
     &ManagementEndpoint::SetTCPCommsStatus},
+  { 32751,
+    &ManagementEndpoint::GetGen2TCPCommsStatus,
+    &ManagementEndpoint::SetTCPCommsStatus},
   // PID_BACKGROUND_QUEUED_STATUS_POLICY
   // PID_BACKGROUND_QUEUED_STATUS_POLICY_DESCRIPTION
   // PID_BACKGROUND_STATUS_TYPE
@@ -103,13 +106,11 @@ ManagementEndpoint::ManagementEndpoint(
     const EndpointProperties &properties,
     const ola::rdm::UID &uid,
     const class EndpointManager *endpoint_manager,
-    class TCPConnectionStats *tcp_stats,
-    bool use_new_comms_status)
+    class TCPConnectionStats *tcp_stats)
     : E133Endpoint(controller, properties),
       m_uid(uid),
       m_endpoint_manager(endpoint_manager),
       m_tcp_stats(tcp_stats),
-      m_use_new_comms_status(use_new_comms_status),
       m_controller(controller) {
 }
 
@@ -419,45 +420,23 @@ const RDMResponse *ManagementEndpoint::GetTCPCommsStatus(
     return NackWithReason(request, NR_FORMAT_ERROR);
   }
 
-  if (m_use_new_comms_status) {
-    struct tcp_stats_message_s {
-      uint32_t ip_address;
-      uint16_t unhealthy_events;
-      uint16_t connection_events;
-    } __attribute__((packed));
-    struct tcp_stats_message_s tcp_stats_message;
+  struct tcp_stats_message_s {
+    uint32_t ip_address;
+    uint16_t unhealthy_events;
+    uint16_t connection_events;
+  } __attribute__((packed));
+  struct tcp_stats_message_s tcp_stats_message;
 
-    tcp_stats_message.ip_address = m_tcp_stats->ip_address.AsInt();
-    tcp_stats_message.unhealthy_events =
-      HostToNetwork(m_tcp_stats->unhealthy_events);
-    tcp_stats_message.connection_events =
-      HostToNetwork(m_tcp_stats->connection_events);
+  tcp_stats_message.ip_address = m_tcp_stats->ip_address.AsInt();
+  tcp_stats_message.unhealthy_events =
+    HostToNetwork(m_tcp_stats->unhealthy_events);
+  tcp_stats_message.connection_events =
+    HostToNetwork(m_tcp_stats->connection_events);
 
-    return GetResponseFromData(
-        request,
-        reinterpret_cast<uint8_t*>(&tcp_stats_message),
-        sizeof(tcp_stats_message));
-  } else {
-    struct tcp_stats_message_s {
-      uint32_t ip_address;
-      uint16_t port;
-      uint16_t unhealthy_events;
-      uint16_t connection_events;
-    } __attribute__((packed));
-    struct tcp_stats_message_s tcp_stats_message;
-
-    tcp_stats_message.ip_address = m_tcp_stats->ip_address.AsInt();
-    tcp_stats_message.port = m_tcp_stats->port;
-    tcp_stats_message.unhealthy_events =
-      HostToNetwork(m_tcp_stats->unhealthy_events);
-    tcp_stats_message.connection_events =
-      HostToNetwork(m_tcp_stats->connection_events);
-
-    return GetResponseFromData(
-        request,
-        reinterpret_cast<uint8_t*>(&tcp_stats_message),
-        sizeof(tcp_stats_message));
-  }
+  return GetResponseFromData(
+      request,
+      reinterpret_cast<uint8_t*>(&tcp_stats_message),
+      sizeof(tcp_stats_message));
 }
 
 const RDMResponse *ManagementEndpoint::SetTCPCommsStatus(
@@ -465,6 +444,34 @@ const RDMResponse *ManagementEndpoint::SetTCPCommsStatus(
   m_tcp_stats->ResetCounters();
   return GetResponseFromData(request, NULL, 0);
 }
+
+const RDMResponse *ManagementEndpoint::GetGen2TCPCommsStatus(
+    const RDMRequest *request) {
+  if (request->ParamDataSize()) {
+    return NackWithReason(request, NR_FORMAT_ERROR);
+  }
+
+  struct tcp_stats_message_s {
+    uint32_t ip_address;
+    uint16_t port;
+    uint16_t unhealthy_events;
+    uint16_t connection_events;
+  } __attribute__((packed));
+  struct tcp_stats_message_s tcp_stats_message;
+
+  tcp_stats_message.ip_address = m_tcp_stats->ip_address.AsInt();
+  tcp_stats_message.port = HostToNetwork(m_tcp_stats->port);
+  tcp_stats_message.unhealthy_events =
+    HostToNetwork(m_tcp_stats->unhealthy_events);
+  tcp_stats_message.connection_events =
+    HostToNetwork(m_tcp_stats->connection_events);
+
+  return GetResponseFromData(
+      request,
+      reinterpret_cast<uint8_t*>(&tcp_stats_message),
+      sizeof(tcp_stats_message));
+}
+
 
 /**
  * Add our UID to the set and run the Discovery Callback.

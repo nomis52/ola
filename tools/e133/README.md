@@ -65,6 +65,8 @@ key 'priority' in the TXT record. The priority should be between 0 and 100. It
 then attempts to open a health checked TCP connection to a controller, starting
 with the controller with the highest priority.
 
+It also responds to RDMNet commands send via UDP.
+
 The --controller-address argument can be used to override DNS-SD and connect to
 a single controller.
 
@@ -89,7 +91,6 @@ To perform scale testing you may need to increase the number of FDs per process.
 * Define a message which includes the IP:Port::UID and send this when a device
   connects to a controller.
 * Implement the controller mesh
-* Add the port to the TCP Stats message and setup the mgmt endpoint.
-* Implement a controller which finds all devices, then sends a TCP_CONNS_STATS
+* Implement a controller which finds all devices, then sends a TCP_CONNS_STATS2
   message to each, and check the response matches what we know from the
   controller mesh.
