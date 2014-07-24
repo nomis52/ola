@@ -31,6 +31,7 @@ class TCPConnectionStats {
  public:
     TCPConnectionStats()
       : ip_address(),
+        port(0),
         connection_events(0),
         unhealthy_events(0) {
     }
@@ -40,7 +41,9 @@ class TCPConnectionStats {
       unhealthy_events = 0;
     }
 
+    // TODO(simon): convert this to a IPV4SocketAddress.
     ola::network::IPV4Address ip_address;
+    uint16_t port;
     uint16_t connection_events;
     uint16_t unhealthy_events;
 };

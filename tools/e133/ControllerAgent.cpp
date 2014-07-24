@@ -294,8 +294,8 @@ void ControllerAgent::ConnectionResult(IPV4SocketAddress controller_address,
 
   OLA_INFO << "TCP Connection established to " << controller_address;
   m_tcp_stats->connection_events++;
-  // TODO(simon): include the port here as well.
   m_tcp_stats->ip_address = controller_address.Host();
+  m_tcp_stats->port = controller_address.Port();
   NewTCPConnection(new ola::network::TCPSocket(fd));
 }
 
@@ -403,6 +403,7 @@ void ControllerAgent::TCPConnectionClosed() {
 
   // zero out the master's IP
   m_tcp_stats->ip_address = IPV4Address();
+  m_tcp_stats->port = 0;
   m_ss->RemoveReadDescriptor(m_tcp_socket);
 
   // shutdown the tx side

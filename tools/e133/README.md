@@ -89,7 +89,7 @@ To perform scale testing you may need to increase the number of FDs per process.
 * Define a message which includes the IP:Port::UID and send this when a device
   connects to a controller.
 * Implement the controller mesh
-* Add the port to the TCP Stats message
+* Add the port to the TCP Stats message and setup the mgmt endpoint.
 * Implement a controller which finds all devices, then sends a TCP_CONNS_STATS
   message to each, and check the response matches what we know from the
   controller mesh.
