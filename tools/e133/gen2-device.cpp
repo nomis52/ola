@@ -20,154 +20,18 @@
  * I'm using this for scale testing.
  */
 
-#include <ola/BaseTypes.h>
-#include <ola/Callback.h>
-#include <ola/Clock.h>
 #include <ola/Logging.h>
-#include <ola/acn/CID.h>
 #include <ola/base/Flags.h>
 #include <ola/base/Init.h>
 #include <ola/base/SysExits.h>
-#include <ola/e133/MessageBuilder.h>
-#include <ola/io/SelectServer.h>
-#include <ola/network/AdvancedTCPConnector.h>
-#include <ola/network/TCPSocketFactory.h>
 #include <signal.h>
 
-#include <memory>
-#include <string>
-#include <vector>
-
-#include "plugins/e131/e131/RootInflator.h"
-#include "plugins/e131/e131/TCPTransport.h"
-#include "tools/e133/ControllerAgent.h"
-#include "tools/e133/E133DiscoveryAgent.h"
-#include "tools/e133/E133HealthCheckedConnection.h"
-#include "tools/e133/MessageQueue.h"
-#include "tools/e133/TCPConnectionStats.h"
+#include "tools/e133/Gen2E133Device.h"
 
 DEFINE_string(controller_address, "",
               "The IP:Port of the controller, if set this bypasses discovery");
-DEFINE_uint16(discovery_startup_delay, 2000,
-              "The time in ms to let DNS-SD run before selecting a controller");
-DEFINE_uint16(terminate_after, 0, "The number of ms to wait before exiting");
 
-using ola::NewCallback;
-using ola::NewSingleCallback;
-using ola::TimeInterval;
-using ola::network::IPV4Address;
 using ola::network::IPV4SocketAddress;
-using ola::network::TCPSocket;
-using ola::plugin::e131::IncomingTCPTransport;
-using std::auto_ptr;
-using std::string;
-using std::vector;
-
-/**
- * A very simple E1.33 Device that uses the reverse-connection model.
- */
-class Gen2Device {
- public:
-  struct Options {
-    // If provided, this overides DNS-SD and specifes controller to connect to.
-    IPV4SocketAddress controller;
-  };
-
-  explicit Gen2Device(const Options &options);
-  ~Gen2Device();
-
-  void Run();
-  void Stop() { m_ss.Terminate(); }
-
- private:
-  const IPV4SocketAddress m_static_controller;
-
-  ola::io::SelectServer m_ss;
-  ola::e133::MessageBuilder m_message_builder;
-  TCPConnectionStats m_tcp_stats;
-  ControllerAgent m_controller_agent;
-
-  auto_ptr<E133DiscoveryAgentInterface> m_discovery_agent;
-
-  void ConnectToController();
-
-  void ControllerList(
-      vector<ControllerAgent::E133ControllerInfo> *controllers);
-
-  DISALLOW_COPY_AND_ASSIGN(Gen2Device);
-};
-
-
-Gen2Device::Gen2Device(const Options &options)
-    : m_static_controller(options.controller),
-      m_message_builder(ola::acn::CID::Generate(), "E1.33 Device"),
-      m_controller_agent(NewCallback(this, &Gen2Device::ControllerList),
-                         &m_ss,
-                         &m_message_builder,
-                         &m_tcp_stats) {
-  if (m_static_controller.Host().IsWildcard()) {
-    E133DiscoveryAgentFactory discovery_agent_factory;
-    m_discovery_agent.reset(discovery_agent_factory.New());
-    m_discovery_agent->Init();
-  }
-}
-
-Gen2Device::~Gen2Device() {
-  if (m_discovery_agent.get()) {
-    m_discovery_agent->Stop();
-  }
-}
-
-void Gen2Device::Run() {
-  if (m_static_controller.Host().IsWildcard()) {
-    m_ss.RegisterSingleTimeout(
-        FLAGS_discovery_startup_delay,
-        NewSingleCallback(this, &Gen2Device::ConnectToController));
-  } else {
-    ConnectToController();
-  }
-
-  if (FLAGS_terminate_after) {
-    m_ss.RegisterSingleTimeout(
-        FLAGS_terminate_after,
-        NewSingleCallback(&m_ss, &ola::io::SelectServer::Terminate));
-  }
-  m_ss.Run();
-}
-
-/**
- * Start the ControllerAgent which will attempt to connect to a controller
- */
-void Gen2Device::ConnectToController() {
-  m_controller_agent.Start();
-}
-
-/**
- * Get the list if controllers, either from the options passed to the
- * constructor or from the E133DiscoveryAgent.
- */
-void Gen2Device::ControllerList(
-      vector<ControllerAgent::E133ControllerInfo> *controllers) {
-  if (m_static_controller.Host().IsWildcard()) {
-    // TODO(simon): make this struct common somewhere
-    vector<E133DiscoveryAgentInterface::E133ControllerInfo> e133_controllers;
-    m_discovery_agent->FindControllers(&e133_controllers);
-
-    vector<E133DiscoveryAgentInterface::E133ControllerInfo>::iterator iter =
-      e133_controllers.begin();
-    for (; iter != e133_controllers.end(); ++iter) {
-      ControllerAgent::E133ControllerInfo info;
-      info.address = iter->address;
-      info.priority = iter->priority;
-      controllers->push_back(info);
-    }
-  } else {
-    ControllerAgent::E133ControllerInfo info;
-    info.address = m_static_controller;
-    info.priority = 100;
-    controllers->push_back(info);
-  }
-}
 
 Gen2Device *device = NULL;
 

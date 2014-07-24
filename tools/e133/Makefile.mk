@@ -96,6 +96,8 @@ tools_e133_libolae133device_la_SOURCES = \
     tools/e133/E133Endpoint.h \
     tools/e133/EndpointManager.cpp \
     tools/e133/EndpointManager.h \
+    tools/e133/Gen2E133Device.cpp \
+    tools/e133/Gen2E133Device.h \
     tools/e133/ManagementEndpoint.cpp \
     tools/e133/ManagementEndpoint.h \
     tools/e133/SimpleE133Node.cpp \
