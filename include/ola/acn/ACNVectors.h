@@ -85,6 +85,7 @@ enum E133ControllerVector {
   VECTOR_CONTROLLER_DEVICE_ACQUIRED = 3,  /**< Device acquired message */
   VECTOR_CONTROLLER_DEVICE_RELEASED = 4,  /**< Device released message */
   VECTOR_CONTROLLER_EXPECT_MASTER = 5,  /**< Expect master message */
+  VECTOR_CONTROLLER_DEVICE_REG = 6,
 };
 }  // namespace acn
 }  // namespace ola

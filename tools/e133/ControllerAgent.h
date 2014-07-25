@@ -34,6 +34,7 @@
 #include "ola/network/TCPConnector.h"
 #include "ola/network/TCPSocket.h"
 #include "ola/rdm/RDMCommand.h"
+#include "ola/rdm/UID.h"
 #include "plugins/e131/e131/E133Inflator.h"
 #include "plugins/e131/e131/E133StatusInflator.h"
 #include "plugins/e131/e131/RootInflator.h"
@@ -82,12 +83,15 @@ class ControllerAgent {
                   ola::io::SelectServerInterface *ss,
                   ola::e133::MessageBuilder *message_builder,
                   TCPConnectionStats *tcp_stats,
+                  const ola::rdm::UID &uid,
                   unsigned int max_queue_size = MAX_QUEUE_SIZE);
 
   /**
    * @Clean up
    */
   ~ControllerAgent();
+
+  void SetLocalSocketAddress(const ola::network::IPV4SocketAddress &our_addr);
 
   /**
    * @brief Start trying to connect to an E1.33 controller.
@@ -134,6 +138,8 @@ class ControllerAgent {
   ola::io::SelectServerInterface *m_ss;
   ola::e133::MessageBuilder *m_message_builder;
   TCPConnectionStats *m_tcp_stats;
+  ola::network::IPV4SocketAddress m_udp_address;
+  const ola::rdm::UID m_uid;
 
   // Connection members
   ControllerList m_known_controllers;
@@ -181,6 +187,8 @@ class ControllerAgent {
       const ola::plugin::e131::E133Header *e133_header,
       uint16_t status_code,
       const std::string &description);
+
+  bool SendRegistrationMessage();
 
   static const unsigned int MAX_QUEUE_SIZE;
   static const unsigned int TCP_CONNECT_TIMEOUT_SECONDS;

@@ -194,7 +194,7 @@ class UID {
      * @param out the ostream
      * @param uid the UID to write.
      */
-    friend std::ostream& operator<< (std::ostream &out, const UID &uid) {
+    friend std::ostream& operator<<(std::ostream &out, const UID &uid) {
       return out << uid.ToString();
     }
 

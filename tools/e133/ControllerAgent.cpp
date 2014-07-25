@@ -27,11 +27,12 @@
 #include "ola/acn/ACNVectors.h"
 #include "ola/io/SelectServerInterface.h"
 #include "ola/network/HealthCheckedConnection.h"
-#include "ola/stl/STLUtils.h"
 #include "ola/network/IPV4Address.h"
 #include "ola/network/SocketAddress.h"
 #include "ola/rdm/RDMCommand.h"
 #include "ola/rdm/RDMCommandSerializer.h"
+#include "ola/stl/STLUtils.h"
+#include "plugins/e131/e131/E133ControllerPDU.h"
 #include "plugins/e131/e131/E133Header.h"
 #include "plugins/e131/e131/E133StatusInflator.h"
 #include "plugins/e131/e131/RDMPDU.h"
@@ -95,12 +96,14 @@ ControllerAgent::ControllerAgent(
     ola::io::SelectServerInterface *ss,
     ola::e133::MessageBuilder *message_builder,
     TCPConnectionStats *tcp_stats,
+    const ola::rdm::UID &uid,
     unsigned int max_queue_size)
     : m_controllers_cb(refresh_controllers_cb),
       m_max_queue_size(max_queue_size),
       m_ss(ss),
       m_message_builder(message_builder),
       m_tcp_stats(tcp_stats),
+      m_uid(uid),
       m_discovery_timeout(ola::thread::INVALID_TIMEOUT),
       m_tcp_connector(m_ss),
       m_connection_id(NULL),
@@ -142,6 +145,11 @@ ControllerAgent::~ControllerAgent() {
   if (m_controllers_cb) {
     delete m_controllers_cb;
   }
+}
+
+void ControllerAgent::SetLocalSocketAddress(
+    const ola::network::IPV4SocketAddress &our_addr) {
+  m_udp_address = our_addr;
 }
 
 bool ControllerAgent::Start() {
@@ -340,6 +348,9 @@ void ControllerAgent::NewTCPConnection(
   }
 
   // TODO(simon): Send the first PDU here that contains our IP:Port:UID info.
+  if (!SendRegistrationMessage()) {
+    OLA_WARN << "Failed to send registration message";
+  }
 
   OLA_INFO << "New connection, sending any un-acked messages";
   bool sent_all = true;
@@ -486,4 +497,27 @@ void ControllerAgent::HandleStatusMessage(
     }
     m_unsent_messages = !sent_all;
   }
+}
+
+bool ControllerAgent::SendRegistrationMessage() {
+  struct DeviceRegistrationMessage {
+    uint32_t ip;
+    uint16_t port;
+    uint8_t uid[ola::rdm::UID::LENGTH];
+  } __attribute__((packed));
+
+  DeviceRegistrationMessage message;
+  message.ip = m_udp_address.Host().AsInt();
+  message.port = ola::network::HostToNetwork(m_udp_address.Port());
+  m_uid.Pack(reinterpret_cast<uint8_t*>(&message.uid), ola::rdm::UID::LENGTH);
+
+  OLA_INFO << "Sending REG message for " << m_udp_address << ": " << m_uid;
+  IOStack packet(m_message_builder->pool());
+  packet.Write(reinterpret_cast<const uint8_t*>(&message), sizeof(message));
+  ola::plugin::e131::E133ControllerPDU::PrependPDU(
+      ola::acn::VECTOR_CONTROLLER_DEVICE_REG, &packet);
+  m_message_builder->BuildTCPRootE133(
+      &packet, ola::acn::VECTOR_FRAMING_CONTROLLER, 0, 0);
+
+  return m_message_queue->SendMessage(&packet);
 }

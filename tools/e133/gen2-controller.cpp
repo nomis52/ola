@@ -43,12 +43,14 @@
 #include <utility>
 #include <vector>
 
-#include "tools/e133/E133DiscoveryAgent.h"
+#include "plugins/e131/e131/E133ControllerInflator.h"
+#include "plugins/e131/e131/E133Inflator.h"
 #include "plugins/e131/e131/RootInflator.h"
 #include "plugins/e131/e131/TCPTransport.h"
+#include "tools/e133/ControllerMesh.h"
+#include "tools/e133/E133DiscoveryAgent.h"
 #include "tools/e133/E133HealthCheckedConnection.h"
 #include "tools/e133/MessageQueue.h"
-#include "tools/e133/ControllerMesh.h"
 
 DEFINE_string(listen_ip, "", "The IP Address to listen on");
 DEFINE_uint16(listen_port, 5569, "The port to listen on");
@@ -120,10 +122,19 @@ class Gen2Controller {
   void Stop();
 
  private:
+  struct RemoteDevice {
+    // This is either the remote address of the device or the remote address of
+    // the controller we learnt the device from.
+    IPV4SocketAddress tcp_socket;
+    IPV4SocketAddress udp_dest;
+  };
+
   typedef std::map<IPV4SocketAddress, DeviceState*> DeviceMap;
+  typedef std::map<ola::rdm::UID, RemoteDevice> UIDMap;
 
   TimeStamp m_start_time;
   DeviceMap m_device_map;
+  UIDMap m_uid_map;
 
   const IPV4SocketAddress m_listen_address;
   ola::ExportMap m_export_map;
@@ -133,6 +144,8 @@ class Gen2Controller {
 
   ola::e133::MessageBuilder m_message_builder;
   ola::plugin::e131::RootInflator m_root_inflator;
+  ola::plugin::e131::E133Inflator m_e133_inflator;
+  ola::plugin::e131::E133ControllerInflator m_e133_controller_inflator;
 
   auto_ptr<E133DiscoveryAgentInterface> m_discovery_agent;
 
@@ -143,6 +156,7 @@ class Gen2Controller {
   void ShowHelp();
   void ShowDevices();
   void ShowSummary();
+  void ShowUIDMap();
 
   void Input(char c);
 
@@ -158,6 +172,15 @@ class Gen2Controller {
   void SocketUnhealthy(IPV4SocketAddress peer);
 
   void SocketClosed(IPV4SocketAddress peer);
+
+  void ControllerMessage(
+      const ola::plugin::e131::TransportHeader *transport_header,
+      uint16_t vector,
+      const string &raw_data);
+
+  void RegisterDevice(
+    const ola::plugin::e131::TransportHeader *transport_header,
+    const uint8_t *data, unsigned int size);
 
   DISALLOW_COPY_AND_ASSIGN(Gen2Controller);
 };
@@ -177,6 +200,11 @@ Gen2Controller::Gen2Controller(const Options &options)
   E133DiscoveryAgentFactory discovery_agent_factory;
   m_discovery_agent.reset(discovery_agent_factory.New());
   m_discovery_agent->Init();
+
+  m_root_inflator.AddInflator(&m_e133_inflator);
+  m_e133_inflator.AddInflator(&m_e133_controller_inflator);
+  m_e133_controller_inflator.SetControllerHandler(
+      NewCallback(this, &Gen2Controller::ControllerMessage));
 }
 
 Gen2Controller::~Gen2Controller() {
@@ -231,9 +259,10 @@ void Gen2Controller::GetControllerList(
 void Gen2Controller::ShowHelp() {
   cout << "------------------" << endl;
   cout << "c - Show peer controllers." << endl;
-  cout << "d - Show devices." << endl;
+  cout << "d - Show connected devices." << endl;
   cout << "h - Show this message." << endl;
   cout << "s - Show summary." << endl;
+  cout << "u - Show UID map." << endl;
   cout << "q - Quit." << endl;
   cout << "------------------" << endl;
 }
@@ -252,6 +281,17 @@ void Gen2Controller::ShowSummary() {
   cout << m_controller_mesh->ConnectedControllerCount()
        << " controllers connected" << endl;
   cout << m_device_map.size() << " devices connected" << endl;
+  cout << m_uid_map.size() << " known UIDs" << endl;
+  cout << "------------------" << endl;
+}
+
+void Gen2Controller::ShowUIDMap() {
+  cout << "------------------" << endl;
+  UIDMap::const_iterator iter = m_uid_map.begin();
+  for (; iter != m_uid_map.end(); ++iter) {
+    cout << iter->first << " -> " << iter->second.udp_dest << ", via "
+         << iter->second.tcp_socket << endl;
+  }
   cout << "------------------" << endl;
 }
 
@@ -271,6 +311,9 @@ void Gen2Controller::Input(char c) {
       break;
     case 's':
       ShowSummary();
+      break;
+    case 'u':
+      ShowUIDMap();
       break;
     default:
       break;
@@ -392,10 +435,69 @@ void Gen2Controller::SocketClosed(IPV4SocketAddress peer) {
   }
 
   m_ss.RemoveReadDescriptor(device->socket.get());
+
+  // TODO(simon): We need to clean out the UID map here
+  UIDMap::const_iterator iter = m_uid_map.begin();
+  while (iter != m_uid_map.end()) {
+    if (peer == iter->second.tcp_socket) {
+      OLA_INFO << "Removed UID " << iter->first;
+      iter = m_uid_map.erase(iter);
+    } else {
+      ++iter;
+    }
+  }
+}
+
+void Gen2Controller::ControllerMessage(
+    const ola::plugin::e131::TransportHeader *transport_header,
+    uint16_t vector,
+    const string &raw_data) {
+  OLA_INFO << "Got controller message with vector " << vector << " ,size  "
+           << raw_data.size();
+  (void) transport_header;
+  if (transport_header->Transport() !=
+      ola::plugin::e131::TransportHeader::TCP) {
+    OLA_WARN << "Controller message via UDP!";
+    return;
+  }
+
+  if (vector == ola::acn::VECTOR_CONTROLLER_DEVICE_REG) {
+    RegisterDevice(transport_header,
+                   reinterpret_cast<const uint8_t*>(raw_data.data()),
+                   raw_data.size());
+  }
+}
+
+void Gen2Controller::RegisterDevice(
+    const ola::plugin::e131::TransportHeader *transport_header,
+    const uint8_t *data, unsigned int size) {
+  // Assumes transport_header.Transport() is TCP
+  struct DeviceRegistrationMessage {
+    uint32_t ip;
+    uint16_t port;
+    uint8_t uid[ola::rdm::UID::LENGTH];
+  } __attribute__((packed));
+
+  DeviceRegistrationMessage message;
+  if (size != sizeof(message)) {
+    OLA_WARN << "DeviceRegistrationMessage of incorrect size "
+             << size << " != " << sizeof(message);
+    return;
+  }
+
+  memcpy(reinterpret_cast<uint8_t*>(&message), data, size);
+  IPV4SocketAddress remote_device(IPV4Address(message.ip),
+                                  ola::network::NetworkToHost(message.port));
+  OLA_INFO << "Found device at " << remote_device;
+  ola::rdm::UID uid(message.uid);
+
+  RemoteDevice device;
+  device.tcp_socket = transport_header->Source();
+  device.udp_dest = remote_device;
+  ola::STLReplace(&m_uid_map, uid, device);
 }
 
 class Gen2Controller *controller = NULL;
-
 
 /**
  * Interupt handler

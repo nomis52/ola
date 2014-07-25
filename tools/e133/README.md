@@ -63,7 +63,8 @@ connection to one of them.
 This uses DNS-SD to locate the '_rdmnet-ctrl._tcp' services and looks for the
 key 'priority' in the TXT record. The priority should be between 0 and 100. It
 then attempts to open a health checked TCP connection to a controller, starting
-with the controller with the highest priority.
+with the controller with the highest priority. Once a TCP connection is setup,
+it informs the controller of the UDP port to send RDMNet get/set to.
 
 It also responds to RDMNet commands send via UDP.
 
@@ -88,9 +89,7 @@ To perform scale testing you may need to increase the number of FDs per process.
 
 ## Gen 2 TODO list
 
-* Define a message which includes the IP:Port::UID and send this when a device
-  connects to a controller.
-* Implement the controller mesh
+* Send information about learnt devices across the controller mesh.
 * Implement a controller which finds all devices, then sends a TCP_CONNS_STATS2
   message to each, and check the response matches what we know from the
   controller mesh.

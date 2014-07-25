@@ -49,11 +49,15 @@ plugins_e131_e131_libolae131core_la_SOURCES = \
     plugins/e131/e131/E131PDU.h \
     plugins/e131/e131/E131Sender.cpp \
     plugins/e131/e131/E131Sender.h \
+    plugins/e131/e131/E133ControllerPDU.cpp \
+    plugins/e131/e131/E133ControllerPDU.h \
     plugins/e131/e131/E133Header.h \
     plugins/e131/e131/E133Inflator.cpp \
     plugins/e131/e131/E133Inflator.h \
     plugins/e131/e131/E133PDU.cpp \
     plugins/e131/e131/E133PDU.h \
+    plugins/e131/e131/E133ControllerInflator.cpp \
+    plugins/e131/e131/E133ControllerInflator.h \
     plugins/e131/e131/E133StatusInflator.cpp \
     plugins/e131/e131/E133StatusInflator.h \
     plugins/e131/e131/E133StatusPDU.cpp \

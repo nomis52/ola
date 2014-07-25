@@ -32,6 +32,7 @@
 #include <ola/io/SelectServer.h>
 #include <ola/network/AdvancedTCPConnector.h>
 #include <ola/network/TCPSocketFactory.h>
+#include <ola/network/InterfacePicker.h>
 #include <ola/rdm/RDMCommandSerializer.h>
 #include <ola/rdm/RDMHelper.h>
 
@@ -74,9 +75,9 @@ Gen2Device::Gen2Device(const Options &options)
       m_controller_agent(NewCallback(this, &Gen2Device::ControllerList),
                          &m_ss,
                          &m_message_builder,
-                         &m_tcp_stats) {
+                         &m_tcp_stats,
+                         options.uid) {
   m_root_inflator.AddInflator(&m_e133_inflator);
-  m_e133_inflator.AddInflator(&m_rdm_inflator);
   m_e133_inflator.AddInflator(&m_rdm_inflator);
 
   m_rdm_inflator.SetRDMHandler(
@@ -121,6 +122,17 @@ bool Gen2Device::Run() {
                     &ola::plugin::e131::IncomingUDPTransport::Receive));
 
   m_ss.AddReadDescriptor(&m_udp_socket);
+
+  // The socket is bound to 0.0.0.0 so we need to 'guess' the local ip here.
+  auto_ptr<ola::network::InterfacePicker> picker(
+      ola::network::InterfacePicker::NewPicker());
+  ola::network::Interface iface;
+  if (!picker->ChooseInterface(&iface, "")) {
+    OLA_WARN << "Failed to lookup local ip";
+  }
+
+  m_controller_agent.SetLocalSocketAddress(
+      IPV4SocketAddress(iface.ip_address, our_addr.Port()));
 
   // Now figure out which controller we're going to connect to.
   if (m_options.controller.Host().IsWildcard()) {
