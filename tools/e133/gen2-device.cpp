@@ -34,6 +34,7 @@
 DEFINE_string(controller_address, "",
               "The IP:Port of the controller, if set this bypasses discovery");
 DEFINE_string(uid, "7a70:00000001", "The UID of the responder.");
+DEFINE_uint16(uid_offset, 0, "An offset to apply to the UID.");
 
 DEFINE_uint16(udp_port, 0, "The port to listen on");
 
@@ -63,7 +64,9 @@ int main(int argc, char *argv[]) {
     exit(ola::EXIT_USAGE);
   }
 
-  Gen2Device::Options options(*uid);
+  UID actual_uid(uid->ManufacturerId(), uid->DeviceId() + FLAGS_uid_offset);
+
+  Gen2Device::Options options(actual_uid);
   options.port = FLAGS_udp_port;
 
   if (!FLAGS_controller_address.str().empty()) {
