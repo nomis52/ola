@@ -303,7 +303,8 @@ AvahiE133DiscoveryAgent::AvahiE133DiscoveryAgent()
       m_client(NULL),
       m_reconnect_timeout(NULL),
       m_backoff(new ExponentialBackoffPolicy(TimeInterval(1, 0),
-                                             TimeInterval(60, 0))) {
+                                             TimeInterval(60, 0))),
+      m_controller_browser(NULL) {
 }
 
 AvahiE133DiscoveryAgent::~AvahiE133DiscoveryAgent() {
@@ -322,6 +323,8 @@ bool AvahiE133DiscoveryAgent::Init() {
 }
 
 bool AvahiE133DiscoveryAgent::Stop() {
+  avahi_threaded_poll_quit(m_threaded_poll);
+
   if (m_client) {
     avahi_client_free(m_client);
   }

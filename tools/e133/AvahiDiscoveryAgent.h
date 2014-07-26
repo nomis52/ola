@@ -28,8 +28,9 @@
 #include <ola/base/Macro.h>
 #include <ola/io/Descriptor.h>
 #include <ola/io/SelectServer.h>
-#include <ola/thread/Mutex.h>
 #include <ola/thread/CallbackThread.h>
+#include <ola/thread/Mutex.h>
+#include <ola/util/Backoff.h>
 #include <map>
 #include <memory>
 #include <string>
@@ -78,6 +79,8 @@ class AvahiE133DiscoveryAgent : public E133DiscoveryAgentInterface {
   AvahiClient *m_client;
   AvahiTimeout *m_reconnect_timeout;
   BackoffGenerator m_backoff;
+
+  AvahiServiceBrowser *m_controller_browser;
 
   /*
 
