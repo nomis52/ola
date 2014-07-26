@@ -43,25 +43,40 @@
 
 class MessageQueue {
  public:
-    MessageQueue(ola::io::ConnectedDescriptor *descriptor,
-                 ola::io::SelectServerInterface *ss,
-                 ola::io::MemoryBlockPool *memory_pool,
-                 unsigned int max_buffer_size = DEFAULT_MAX_BUFFER_SIZE);
-    ~MessageQueue();
+  MessageQueue(ola::io::ConnectedDescriptor *descriptor,
+               ola::io::SelectServerInterface *ss,
+               ola::io::MemoryBlockPool *memory_pool,
+               unsigned int max_buffer_size = DEFAULT_MAX_BUFFER_SIZE);
+  ~MessageQueue();
 
-    bool LimitReached() const;
-    bool SendMessage(ola::io::IOStack *stack);
+  /**
+   * @brief Adjust the number of bytes we'll buffer.
+   * @param new_limit the new limit in bytes
+   *
+   * If this is lower than the current amount buffered, the limit will be
+   * lowered to the amount in the buffer
+   */
+  void ModifyLimit(unsigned int new_limit);
 
-    static const unsigned int DEFAULT_MAX_BUFFER_SIZE;
+  /**
+   * @brief Returns true if we've reached the specified maximum buffer size.
+   *
+   * Once the limit is reached, no new messages will be sent until the buffer
+   * drains.
+   */
+  bool LimitReached() const;
+  bool SendMessage(ola::io::IOStack *stack);
+
+  static const unsigned int DEFAULT_MAX_BUFFER_SIZE;
 
  private:
-    ola::io::ConnectedDescriptor *m_descriptor;
-    ola::io::SelectServerInterface *m_ss;
-    ola::io::IOQueue m_output_buffer;
-    bool m_associated;
-    unsigned int m_max_buffer_size;
+  ola::io::ConnectedDescriptor *m_descriptor;
+  ola::io::SelectServerInterface *m_ss;
+  ola::io::IOQueue m_output_buffer;
+  bool m_associated;
+  unsigned int m_max_buffer_size;
 
-    void PerformWrite();
-    void AssociateIfRequired();
+  void PerformWrite();
+  void AssociateIfRequired();
 };
 #endif  // TOOLS_E133_MESSAGEQUEUE_H_

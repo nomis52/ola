@@ -21,6 +21,8 @@
 
 #include <ola/Callback.h>
 
+#include <algorithm>
+
 // 1k is probably enough for userspace. The Linux kernel default is 4k,
 // tunable via /proc/sys/net/core/wmem_{max,default}.
 const unsigned int MessageQueue::DEFAULT_MAX_BUFFER_SIZE = 1024;
@@ -58,11 +60,11 @@ MessageQueue::~MessageQueue() {
   m_descriptor->SetOnWritable(NULL);
 }
 
+void MessageQueue::ModifyLimit(unsigned int new_limit) {
+  m_max_buffer_size = std::max(m_output_buffer.Size(), new_limit);
+}
 
-/**
- * Returns true if we've reached the specified maximum buffer size. No new
- * messages will be sent until the buffer drains.
- */
+
 bool MessageQueue::LimitReached() const {
   return m_output_buffer.Size() >= m_max_buffer_size;
 }
@@ -70,7 +72,7 @@ bool MessageQueue::LimitReached() const {
 
 /**
  * Queue up the data in an IOStack to send on the underlying descriptor.
- * @param stack the IOStack to send. All data in this stack will be send and
+ * @param stack the IOStack to send. All data in this stack will be sent and
  * the stack will be emptied.
  * @return true if the data was queued for sending, false if the internal
  *   buffer size has been exceeded.
@@ -103,6 +105,9 @@ void MessageQueue::PerformWrite() {
 void MessageQueue::AssociateIfRequired() {
   if (m_output_buffer.Empty())
     return;
+  if (m_associated)
+    return;
+
   m_ss->AddWriteDescriptor(m_descriptor);
   m_associated = true;
 }

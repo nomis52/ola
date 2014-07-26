@@ -52,6 +52,7 @@ class ControllerConnection {
 
   ControllerConnection(const ola::network::IPV4SocketAddress &address,
                        ola::io::SelectServerInterface *ss,
+                       ola::e133::MessageBuilder *message_builder,
                        CloseCallback *close_callback,
                        ola::plugin::e131::E133Inflator *m_e133_inflator);
 
@@ -72,6 +73,7 @@ class ControllerConnection {
  private:
   ola::network::IPV4SocketAddress m_address;
   ola::io::SelectServerInterface *m_ss;
+  ola::e133::MessageBuilder *m_message_builder;
   CloseCallback *m_close_callback;
   ola::plugin::e131::RootInflator m_root_inflator;
 
@@ -85,6 +87,7 @@ class ControllerConnection {
   void ConnectionUnhealthy();
   void ReceiveTCPData();
   void RLPDataReceived(const ola::plugin::e131::TransportHeader &header);
+  void RequestDeviceList();
 
   DISALLOW_COPY_AND_ASSIGN(ControllerConnection);
 };

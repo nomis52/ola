@@ -26,6 +26,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include <utility>
 
 #include "ola/Callback.h"
 #include "ola/base/Macro.h"
@@ -36,6 +37,7 @@
 #include "ola/rdm/RDMCommand.h"
 #include "plugins/e131/e131/E133Inflator.h"
 #include "plugins/e131/e131/E133StatusInflator.h"
+#include "plugins/e131/e131/E133ControllerInflator.h"
 #include "plugins/e131/e131/RootInflator.h"
 #include "tools/e133/E133HealthCheckedConnection.h"
 #include "tools/e133/MessageQueue.h"
@@ -69,11 +71,27 @@ class ControllerMesh {
       RefreshControllersCallback;
 
   /**
+   * @brief The callback run as a result of FindControllers.
+   *
+   * The callback populates the first argument with the list of known
+   * controllers.
+   */
+  typedef ola::Callback3<void,
+      const ola::network::IPV4SocketAddress&,
+      const ola::network::IPV4SocketAddress&,
+      const ola::rdm::UID&> AddDeviceCallback;
+
+  typedef ola::Callback1<void,
+      const ola::network::IPV4SocketAddress&> ControllerDisconnectCallback;
+
+  /**
    * @brief Create a new ControllerMesh.
    * @param refresh_controllers_cb The callback used to refresh the controller
    *   list. Ownership is transferred.
    */
   ControllerMesh(RefreshControllersCallback *refresh_controllers_cb,
+                 AddDeviceCallback *add_device_callback,
+                 ControllerDisconnectCallback *disconnect_cb,
                  ola::io::SelectServerInterface *ss,
                  ola::e133::MessageBuilder *message_builder,
                  uint16_t our_port,
@@ -90,6 +108,12 @@ class ControllerMesh {
   bool Start();
 
   unsigned int ConnectedControllerCount();
+
+  void InformControllerOfDevices(
+      const ola::network::IPV4SocketAddress &controller_address,
+      const std::vector<std::pair<
+        ola::rdm::UID,
+        ola::network::IPV4SocketAddress> > &devices);
 
   void InformControllersOfAcquiredDevice(
       const ola::rdm::UID &uid,
@@ -109,6 +133,8 @@ class ControllerMesh {
   typedef std::vector<ControllerInfo> ControllerList;
 
   RefreshControllersCallback *m_controllers_cb;
+  AddDeviceCallback *m_add_device_callback;
+  ControllerDisconnectCallback *m_disconnect_cb;
   const uint16_t m_our_port;
   const unsigned int m_max_queue_size;
   ola::io::SelectServerInterface *m_ss;
@@ -124,6 +150,7 @@ class ControllerMesh {
   // Inflators
   ola::plugin::e131::E133Inflator m_e133_inflator;
   ola::plugin::e131::E133StatusInflator m_e133_status_inflator;
+  ola::plugin::e131::E133ControllerInflator m_e133_controller_inflator;
 
   bool CheckForNewControllers();
   void OnTCPConnect(ola::network::TCPSocket *socket);
@@ -137,6 +164,15 @@ class ControllerMesh {
 
   class ControllerConnection *FindControllerConnection(
       const ola::network::IPV4SocketAddress &peer_addr);
+
+  void ControllerMessage(
+      const ola::plugin::e131::TransportHeader *transport_header,
+      uint16_t vector,
+      const std::string &raw_data);
+
+  void DeviceList(
+      const ola::network::IPV4SocketAddress &controller_address,
+      const uint8_t *data, unsigned int size);
 
   static const unsigned int MAX_QUEUE_SIZE;
   static const unsigned int TCP_CONNECT_TIMEOUT_SECONDS;

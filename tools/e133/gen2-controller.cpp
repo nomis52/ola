@@ -44,6 +44,7 @@
 #include <vector>
 
 #include "plugins/e131/e131/E133ControllerInflator.h"
+#include "plugins/e131/e131/E133ControllerPDU.h"
 #include "plugins/e131/e131/E133Inflator.h"
 #include "plugins/e131/e131/RootInflator.h"
 #include "plugins/e131/e131/TCPTransport.h"
@@ -71,6 +72,7 @@ using ola::network::IPV4Address;
 using ola::network::IPV4SocketAddress;
 using ola::network::TCPSocket;
 using ola::plugin::e131::IncomingTCPTransport;
+using ola::rdm::UID;
 using std::auto_ptr;
 using std::cout;
 using std::endl;
@@ -127,6 +129,7 @@ class Gen2Controller {
     // the controller we learnt the device from.
     IPV4SocketAddress tcp_socket;
     IPV4SocketAddress udp_dest;
+    bool local;
   };
 
   typedef std::map<IPV4SocketAddress, DeviceState*> DeviceMap;
@@ -178,6 +181,10 @@ class Gen2Controller {
       uint16_t vector,
       const string &raw_data);
 
+  void SendDeviceList(
+    const ola::plugin::e131::TransportHeader *transport_header,
+    unsigned int size);
+
   void LearnDevice(
     const ola::plugin::e131::TransportHeader *transport_header,
     const uint8_t *data, unsigned int size);
@@ -189,6 +196,15 @@ class Gen2Controller {
   void RegisterDevice(
     const ola::plugin::e131::TransportHeader *transport_header,
     const uint8_t *data, unsigned int size);
+
+  void AddDevice(
+    const ola::network::IPV4SocketAddress &device_address,
+    const ola::network::IPV4SocketAddress &learnt_via,
+    const ola::rdm::UID &uid);
+
+  void RemoveDevicesForController(
+    bool is_local,
+    const ola::network::IPV4SocketAddress &controller_address);
 
   DISALLOW_COPY_AND_ASSIGN(Gen2Controller);
 };
@@ -202,7 +218,6 @@ Gen2Controller::Gen2Controller(const Options &options)
       m_message_builder(ola::acn::CID::Generate(), "E1.33 Controller"),
       m_root_inflator(
           NewCallback(this, &Gen2Controller::RLPDataReceived)),
-      m_controller_mesh(NULL),
       m_stdin_handler(&m_ss,
                       ola::NewCallback(this, &Gen2Controller::Input)) {
   E133DiscoveryAgentFactory discovery_agent_factory;
@@ -235,6 +250,8 @@ bool Gen2Controller::Start() {
 
   m_controller_mesh.reset(new ControllerMesh(
         NewCallback(this, &Gen2Controller::GetControllerList),
+        NewCallback(this, &Gen2Controller::AddDevice),
+        NewCallback(this, &Gen2Controller::RemoveDevicesForController, false),
         &m_ss, &m_message_builder, m_listen_address.Port()));
   m_controller_mesh->Start();
 
@@ -298,7 +315,8 @@ void Gen2Controller::ShowUIDMap() {
   UIDMap::const_iterator iter = m_uid_map.begin();
   for (; iter != m_uid_map.end(); ++iter) {
     cout << iter->first << " -> " << iter->second.udp_dest << ", via "
-         << iter->second.tcp_socket << endl;
+         << iter->second.tcp_socket
+         << (iter->second.local ? " (local)" : "") << endl;
   }
   cout << "------------------" << endl;
 }
@@ -444,16 +462,7 @@ void Gen2Controller::SocketClosed(IPV4SocketAddress peer) {
 
   m_ss.RemoveReadDescriptor(device->socket.get());
 
-  UIDMap::const_iterator iter = m_uid_map.begin();
-  while (iter != m_uid_map.end()) {
-    if (peer == iter->second.tcp_socket) {
-      OLA_INFO << "Removed UID " << iter->first;
-      m_controller_mesh->InformControllersOfReleasedDevice(iter->first);
-      iter = m_uid_map.erase(iter);
-    } else {
-      ++iter;
-    }
-  }
+  RemoveDevicesForController(true, peer);
 }
 
 void Gen2Controller::ControllerMessage(
@@ -462,7 +471,6 @@ void Gen2Controller::ControllerMessage(
     const string &raw_data) {
   OLA_INFO << "Got controller message with vector " << vector << " ,size  "
            << raw_data.size();
-  (void) transport_header;
   if (transport_header->Transport() !=
       ola::plugin::e131::TransportHeader::TCP) {
     OLA_WARN << "Controller message via UDP!";
@@ -470,6 +478,9 @@ void Gen2Controller::ControllerMessage(
   }
 
   switch (vector) {
+    case ola::acn::VECTOR_CONTROLLER_FETCH_DEVICES:
+      SendDeviceList(transport_header, raw_data.size());
+      break;
     case ola::acn::VECTOR_CONTROLLER_DEVICE_ACQUIRED:
       LearnDevice(transport_header,
                   reinterpret_cast<const uint8_t*>(raw_data.data()),
@@ -490,6 +501,57 @@ void Gen2Controller::ControllerMessage(
   }
 }
 
+void Gen2Controller::SendDeviceList(
+    const ola::plugin::e131::TransportHeader *transport_header,
+    unsigned int size) {
+  if (size != 0) {
+    OLA_WARN << "FetchDeviceList message of incorrect size " << size;
+    return;
+  }
+
+  DeviceState *state = STLFindOrNull(m_device_map, transport_header->Source());
+  if (!state) {
+    OLA_WARN << "Can't find state for " << transport_header->Source();
+    return;
+  }
+
+  if (!state->message_queue.get()) {
+    return;
+  }
+
+  struct DeviceEntry {
+    uint32_t ip;
+    uint16_t port;
+    uint8_t uid[ola::rdm::UID::LENGTH];
+  } __attribute__((packed));
+
+  ola::io::IOStack packet(m_message_builder.pool());
+  unsigned int device_count = 0;
+  UIDMap::const_iterator iter = m_uid_map.begin();
+  for (; iter != m_uid_map.end(); ++iter) {
+    if (!iter->second.local) {
+      continue;
+    }
+
+    DeviceEntry entry;
+    entry.ip = iter->second.udp_dest.Host().AsInt();
+    entry.port = ola::network::HostToNetwork(iter->second.udp_dest.Port());
+    iter->first.Pack(reinterpret_cast<uint8_t*>(&entry.uid),
+                     ola::rdm::UID::LENGTH);
+    packet.Write(reinterpret_cast<const uint8_t*>(&entry), sizeof(entry));
+    device_count++;
+  }
+
+  ola::plugin::e131::E133ControllerPDU::PrependPDU(
+      ola::acn::VECTOR_CONTROLLER_DEVICE_LIST, &packet);
+  m_message_builder.BuildTCPRootE133(
+      &packet, ola::acn::VECTOR_FRAMING_CONTROLLER, 0, 0);
+
+  OLA_INFO << "Sending VECTOR_CONTROLLER_DEVICE_LIST message with "
+           << device_count << " devices to " << transport_header->Source();
+  state->message_queue->SendMessage(&packet);
+}
+
 void Gen2Controller::LearnDevice(
     const ola::plugin::e131::TransportHeader *transport_header,
     const uint8_t *data, unsigned int size) {
@@ -506,16 +568,13 @@ void Gen2Controller::LearnDevice(
     return;
   }
 
-  memcpy(reinterpret_cast<uint8_t*>(&message), data, size);
+  memcpy(reinterpret_cast<uint8_t*>(&message), data, sizeof(message));
   IPV4SocketAddress remote_device(IPV4Address(message.ip),
                                   ola::network::NetworkToHost(message.port));
   OLA_INFO << "Informed about device at " << remote_device;
   ola::rdm::UID uid(message.uid);
 
-  RemoteDevice device;
-  device.tcp_socket = transport_header->Source();
-  device.udp_dest = remote_device;
-  ola::STLReplace(&m_uid_map, uid, device);
+  AddDevice(remote_device, transport_header->Source(), uid);
 }
 
 void Gen2Controller::ForgetDevice(
@@ -532,7 +591,7 @@ void Gen2Controller::ForgetDevice(
     return;
   }
 
-  memcpy(reinterpret_cast<uint8_t*>(&message), data, size);
+  memcpy(reinterpret_cast<uint8_t*>(&message), data, sizeof(message));
   ola::rdm::UID uid(message.uid);
   OLA_INFO << "Informed to forget about " << uid;
 
@@ -567,7 +626,7 @@ void Gen2Controller::RegisterDevice(
     return;
   }
 
-  memcpy(reinterpret_cast<uint8_t*>(&message), data, size);
+  memcpy(reinterpret_cast<uint8_t*>(&message), data, sizeof(message));
   IPV4SocketAddress remote_device(IPV4Address(message.ip),
                                   ola::network::NetworkToHost(message.port));
   OLA_INFO << "Found device at " << remote_device;
@@ -576,8 +635,38 @@ void Gen2Controller::RegisterDevice(
   RemoteDevice device;
   device.tcp_socket = transport_header->Source();
   device.udp_dest = remote_device;
+  device.local = true;
   ola::STLReplace(&m_uid_map, uid, device);
   m_controller_mesh->InformControllersOfAcquiredDevice(uid, remote_device);
+}
+
+void Gen2Controller::AddDevice(
+    const IPV4SocketAddress &device_address,
+    const IPV4SocketAddress &learnt_via,
+    const UID &uid) {
+
+  RemoteDevice device;
+  device.tcp_socket = learnt_via,
+  device.udp_dest = device_address;
+  device.local = false;
+  ola::STLReplace(&m_uid_map, uid, device);
+}
+
+void Gen2Controller::RemoveDevicesForController(
+    bool is_local,
+    const ola::network::IPV4SocketAddress &controller_address) {
+  UIDMap::const_iterator iter = m_uid_map.begin();
+  while (iter != m_uid_map.end()) {
+    if (controller_address == iter->second.tcp_socket) {
+      OLA_INFO << "Removed UID " << iter->first;
+      if (is_local) {
+        m_controller_mesh->InformControllersOfReleasedDevice(iter->first);
+      }
+      iter = m_uid_map.erase(iter);
+    } else {
+      ++iter;
+    }
+  }
 }
 
 class Gen2Controller *controller = NULL;

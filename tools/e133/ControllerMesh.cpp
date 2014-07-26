@@ -20,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "ola/Callback.h"
@@ -74,11 +75,15 @@ const TimeInterval ControllerMesh::MAX_TCP_RETRY_DELAY(30, 0);
  */
 ControllerMesh::ControllerMesh(
     RefreshControllersCallback *refresh_controllers_cb,
+    AddDeviceCallback *add_device_callback,
+    ControllerDisconnectCallback *disconnect_cb,
     ola::io::SelectServerInterface *ss,
     ola::e133::MessageBuilder *message_builder,
     uint16_t our_port,
     unsigned int max_queue_size)
     : m_controllers_cb(refresh_controllers_cb),
+      m_add_device_callback(add_device_callback),
+      m_disconnect_cb(disconnect_cb),
       m_our_port(our_port),
       m_max_queue_size(max_queue_size),
       m_ss(ss),
@@ -90,9 +95,13 @@ ControllerMesh::ControllerMesh(
           TimeInterval(TCP_CONNECT_TIMEOUT_SECONDS, 0)),
       m_backoff_policy(INITIAL_TCP_RETRY_DELAY, MAX_TCP_RETRY_DELAY) {
   m_e133_inflator.AddInflator(&m_e133_status_inflator);
+  m_e133_inflator.AddInflator(&m_e133_controller_inflator);
 
   m_e133_status_inflator.SetStatusHandler(
       NewCallback(this, &ControllerMesh::HandleStatusMessage));
+
+  m_e133_controller_inflator.SetControllerHandler(
+            NewCallback(this, &ControllerMesh::ControllerMessage));
 }
 
 ControllerMesh::~ControllerMesh() {
@@ -132,6 +141,21 @@ unsigned int ControllerMesh::ConnectedControllerCount() {
     }
   }
   return count;
+}
+
+void ControllerMesh::InformControllerOfDevices(
+    const IPV4SocketAddress &controller_address,
+    const std::vector<std::pair<
+      ola::rdm::UID,
+      ola::network::IPV4SocketAddress> > &devices) {
+  ControllerConnection *connection =
+    FindControllerConnection(controller_address);
+  if (!connection) {
+    OLA_WARN << "Can't find controller " << controller_address;
+    return;
+  }
+
+  (void) devices;
 }
 
 void ControllerMesh::InformControllersOfAcquiredDevice(
@@ -242,6 +266,7 @@ bool ControllerMesh::CheckForNewControllers() {
       ControllerConnection *connection = new ControllerConnection(
         *c_iter,
         m_ss,
+        m_message_builder,
         NewCallback(this, &ControllerMesh::TCPConnectionClosed),
         &m_e133_inflator);
       ControllerInfo info;
@@ -290,6 +315,9 @@ void ControllerMesh::OnTCPConnect(TCPSocket *socket_ptr) {
 }
 
 void ControllerMesh::TCPConnectionClosed(const IPV4SocketAddress &peer_addr) {
+  if (m_disconnect_cb) {
+    m_disconnect_cb->Run(peer_addr);
+  }
   m_tcp_connector.Disconnect(peer_addr);
 }
 
@@ -340,4 +368,62 @@ ControllerConnection *ControllerMesh::FindControllerConnection(
     }
   }
   return NULL;
+}
+
+
+void ControllerMesh::ControllerMessage(
+    const ola::plugin::e131::TransportHeader *transport_header,
+    uint16_t vector,
+    const string &raw_data) {
+  OLA_INFO << "Got controller message with vector " << vector << " ,size  "
+           << raw_data.size();
+  if (transport_header->Transport() !=
+      ola::plugin::e131::TransportHeader::TCP) {
+    OLA_WARN << "Controller message via UDP!";
+    return;
+  }
+
+  switch (vector) {
+    case ola::acn::VECTOR_CONTROLLER_DEVICE_LIST:
+      DeviceList(transport_header->Source(),
+                 reinterpret_cast<const uint8_t*>(raw_data.data()),
+                 raw_data.size());
+      break;
+    default:
+      break;
+  }
+}
+
+void ControllerMesh::DeviceList(
+    const ola::network::IPV4SocketAddress &controller_address,
+    const uint8_t *data, unsigned int size) {
+
+  struct DeviceEntry {
+    uint32_t ip;
+    uint16_t port;
+    uint8_t uid[ola::rdm::UID::LENGTH];
+  } __attribute__((packed));
+
+  if (size % sizeof(DeviceEntry) != 0) {
+    OLA_WARN << "Invalid multiple of " << sizeof(DeviceEntry)
+             << " in VECTOR_CONTROLLER_DEVICE_LIST message";
+    return;
+  }
+
+  if (!m_add_device_callback) {
+    return;
+  }
+
+  const uint8_t *ptr = data;
+  while (ptr < data + size) {
+    DeviceEntry device;
+    memcpy(reinterpret_cast<uint8_t*>(&device), data, size);
+    IPV4SocketAddress remote_device(
+        IPV4Address(device.ip),
+        ola::network::NetworkToHost(device.port));
+      ola::rdm::UID uid(device.uid);
+
+    m_add_device_callback->Run(remote_device, controller_address, uid);
+    ptr += sizeof(DeviceEntry);
+  }
 }

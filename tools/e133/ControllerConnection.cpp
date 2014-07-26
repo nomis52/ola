@@ -24,6 +24,7 @@
 #include "ola/io/SelectServerInterface.h"
 #include "ola/network/HealthCheckedConnection.h"
 #include "ola/network/SocketAddress.h"
+#include "plugins/e131/e131/E133ControllerPDU.h"
 #include "tools/e133/ControllerConnection.h"
 #include "tools/e133/E133HealthCheckedConnection.h"
 
@@ -39,10 +40,12 @@ using std::auto_ptr;
 ControllerConnection::ControllerConnection(
     const ola::network::IPV4SocketAddress &address,
     ola::io::SelectServerInterface *ss,
+    ola::e133::MessageBuilder *message_builder,
     CloseCallback *close_callback,
     ola::plugin::e131::E133Inflator *m_e133_inflator)
       : m_address(address),
         m_ss(ss),
+        m_message_builder(message_builder),
         m_close_callback(close_callback),
         m_root_inflator(
             NewCallback(this, &ControllerConnection::RLPDataReceived)) {
@@ -90,6 +93,7 @@ bool ControllerConnection::SetupConnection(
   }
 
   // TODO(simon): Send the first PDU here that contains our IP:Port:UID info.
+  RequestDeviceList();
 
   if (m_incoming_tcp_transport.get()) {
     OLA_WARN << "Already have an IncomingTCPTransport";
@@ -140,4 +144,15 @@ void ControllerConnection::RLPDataReceived(const TransportHeader&) {
   if (m_health_checked_connection.get()) {
     m_health_checked_connection->HeartbeatReceived();
   }
+}
+
+void ControllerConnection::RequestDeviceList() {
+  IOStack packet(m_message_builder->pool());
+  ola::plugin::e131::E133ControllerPDU::PrependPDU(
+      ola::acn::VECTOR_CONTROLLER_FETCH_DEVICES,
+      &packet);
+  m_message_builder->BuildTCPRootE133(
+      &packet, ola::acn::VECTOR_FRAMING_CONTROLLER, 0,
+      0);
+  SendMessage(&packet);
 }
