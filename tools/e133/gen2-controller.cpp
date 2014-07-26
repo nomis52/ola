@@ -178,6 +178,14 @@ class Gen2Controller {
       uint16_t vector,
       const string &raw_data);
 
+  void LearnDevice(
+    const ola::plugin::e131::TransportHeader *transport_header,
+    const uint8_t *data, unsigned int size);
+
+  void ForgetDevice(
+    const ola::plugin::e131::TransportHeader *transport_header,
+    const uint8_t *data, unsigned int size);
+
   void RegisterDevice(
     const ola::plugin::e131::TransportHeader *transport_header,
     const uint8_t *data, unsigned int size);
@@ -436,11 +444,11 @@ void Gen2Controller::SocketClosed(IPV4SocketAddress peer) {
 
   m_ss.RemoveReadDescriptor(device->socket.get());
 
-  // TODO(simon): We need to clean out the UID map here
   UIDMap::const_iterator iter = m_uid_map.begin();
   while (iter != m_uid_map.end()) {
     if (peer == iter->second.tcp_socket) {
       OLA_INFO << "Removed UID " << iter->first;
+      m_controller_mesh->InformControllersOfReleasedDevice(iter->first);
       iter = m_uid_map.erase(iter);
     } else {
       ++iter;
@@ -461,11 +469,85 @@ void Gen2Controller::ControllerMessage(
     return;
   }
 
-  if (vector == ola::acn::VECTOR_CONTROLLER_DEVICE_REG) {
-    RegisterDevice(transport_header,
-                   reinterpret_cast<const uint8_t*>(raw_data.data()),
-                   raw_data.size());
+  switch (vector) {
+    case ola::acn::VECTOR_CONTROLLER_DEVICE_ACQUIRED:
+      LearnDevice(transport_header,
+                  reinterpret_cast<const uint8_t*>(raw_data.data()),
+                  raw_data.size());
+      break;
+    case ola::acn::VECTOR_CONTROLLER_DEVICE_RELEASED:
+      ForgetDevice(transport_header,
+                  reinterpret_cast<const uint8_t*>(raw_data.data()),
+                  raw_data.size());
+      break;
+    case ola::acn::VECTOR_CONTROLLER_DEVICE_REG:
+      RegisterDevice(transport_header,
+                     reinterpret_cast<const uint8_t*>(raw_data.data()),
+                     raw_data.size());
+      break;
+    default:
+      break;
   }
+}
+
+void Gen2Controller::LearnDevice(
+    const ola::plugin::e131::TransportHeader *transport_header,
+    const uint8_t *data, unsigned int size) {
+  struct DeviceAcquireMessage {
+    uint32_t ip;
+    uint16_t port;
+    uint8_t uid[ola::rdm::UID::LENGTH];
+  } __attribute__((packed));
+
+  DeviceAcquireMessage message;
+  if (size != sizeof(message)) {
+    OLA_WARN << "DeviceAcquireMessage of incorrect size "
+             << size << " != " << sizeof(message);
+    return;
+  }
+
+  memcpy(reinterpret_cast<uint8_t*>(&message), data, size);
+  IPV4SocketAddress remote_device(IPV4Address(message.ip),
+                                  ola::network::NetworkToHost(message.port));
+  OLA_INFO << "Informed about device at " << remote_device;
+  ola::rdm::UID uid(message.uid);
+
+  RemoteDevice device;
+  device.tcp_socket = transport_header->Source();
+  device.udp_dest = remote_device;
+  ola::STLReplace(&m_uid_map, uid, device);
+}
+
+void Gen2Controller::ForgetDevice(
+    const ola::plugin::e131::TransportHeader *transport_header,
+    const uint8_t *data, unsigned int size) {
+  struct DeviceReleaseMessage {
+    uint8_t uid[ola::rdm::UID::LENGTH];
+  } __attribute__((packed));
+
+  DeviceReleaseMessage message;
+  if (size != sizeof(message)) {
+    OLA_WARN << "DeviceReleaseMessage of incorrect size "
+             << size << " != " << sizeof(message);
+    return;
+  }
+
+  memcpy(reinterpret_cast<uint8_t*>(&message), data, size);
+  ola::rdm::UID uid(message.uid);
+  OLA_INFO << "Informed to forget about " << uid;
+
+  UIDMap::iterator iter = m_uid_map.find(uid);
+  if (iter == m_uid_map.end()) {
+    OLA_WARN << "UID " << uid << " not found in map, inconsistent state!";
+    return;
+  }
+
+  if (iter->second.tcp_socket != transport_header->Source()) {
+    OLA_WARN << "Release for " << uid << ", owner mismatch "
+             << iter->second.tcp_socket << " != " << transport_header->Source();
+  }
+
+  m_uid_map.erase(iter);
 }
 
 void Gen2Controller::RegisterDevice(
@@ -495,6 +577,7 @@ void Gen2Controller::RegisterDevice(
   device.tcp_socket = transport_header->Source();
   device.udp_dest = remote_device;
   ola::STLReplace(&m_uid_map, uid, device);
+  m_controller_mesh->InformControllersOfAcquiredDevice(uid, remote_device);
 }
 
 class Gen2Controller *controller = NULL;

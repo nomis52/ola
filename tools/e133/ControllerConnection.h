@@ -27,6 +27,7 @@
 
 #include "ola/Callback.h"
 #include "ola/base/Macro.h"
+#include "ola/io/IOStack.h"
 #include "ola/e133/MessageBuilder.h"
 #include "ola/io/SelectServerInterface.h"
 #include "ola/network/SocketAddress.h"
@@ -65,6 +66,8 @@ class ControllerConnection {
    */
   bool SetupConnection(ola::network::TCPSocket *socket_ptr,
                        ola::e133::MessageBuilder *message_builder);
+
+  bool SendMessage(ola::io::IOStack *stack);
 
  private:
   ola::network::IPV4SocketAddress m_address;

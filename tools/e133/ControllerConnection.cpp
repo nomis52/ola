@@ -32,6 +32,7 @@ using ola::NewSingleCallback;
 using ola::network::HealthCheckedConnection;
 using ola::network::IPV4SocketAddress;
 using ola::network::TCPSocket;
+using ola::io::IOStack;
 using ola::plugin::e131::TransportHeader;
 using std::auto_ptr;
 
@@ -102,6 +103,10 @@ bool ControllerConnection::SetupConnection(
     NewSingleCallback(this, &ControllerConnection::CloseConnection));
   m_ss->AddReadDescriptor(m_tcp_socket.get());
   return true;
+}
+
+bool ControllerConnection::SendMessage(IOStack *stack) {
+  return m_message_queue->SendMessage(stack);
 }
 
 void ControllerConnection::CloseConnection() {

@@ -78,18 +78,20 @@ from devices.
 
 It also forms the TCP mesh with any other controllers it discovers.
 
-To perform scale testing you may need to increase the number of FDs per process.
+To perform scale testing you may need to increase the number of FDs per process
+& the number of processes.
 
 ### Mac:
 
-> sysctl -w kern.maxfiles=20480
+> sysctl -w kern.maxfiles=30000
+> sysctl -w kern.maxprocperuid=12000
 > sysctl -w kern.maxfilesperproc=18000
 > ulimit -n 12000
+> ulimit -v 12000
 > ulimit -a  # confirm
 
 ## Gen 2 TODO list
 
-* Send information about learnt devices across the controller mesh.
 * Implement a controller which finds all devices, then sends a TCP_CONNS_STATS2
   message to each, and check the response matches what we know from the
   controller mesh.

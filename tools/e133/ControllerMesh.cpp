@@ -34,6 +34,7 @@
 #include "ola/rdm/RDMCommandSerializer.h"
 #include "plugins/e131/e131/E133Header.h"
 #include "plugins/e131/e131/E133StatusInflator.h"
+#include "plugins/e131/e131/E133ControllerPDU.h"
 #include "plugins/e131/e131/RDMPDU.h"
 #include "tools/e133/ControllerMesh.h"
 #include "tools/e133/ControllerConnection.h"
@@ -133,6 +134,73 @@ unsigned int ControllerMesh::ConnectedControllerCount() {
   return count;
 }
 
+void ControllerMesh::InformControllersOfAcquiredDevice(
+    const ola::rdm::UID &uid,
+    const ola::network::IPV4SocketAddress &udp_address) {
+  struct DeviceAcquireMessage {
+    uint32_t ip;
+    uint16_t port;
+    uint8_t uid[ola::rdm::UID::LENGTH];
+  } __attribute__((packed));
+
+  DeviceAcquireMessage message;
+  message.ip = udp_address.Host().AsInt();
+  message.port = ola::network::HostToNetwork(udp_address.Port());
+  uid.Pack(reinterpret_cast<uint8_t*>(&message.uid), ola::rdm::UID::LENGTH);
+
+  ControllerList::iterator iter = m_known_controllers.begin();
+  // TODO(simon): this creates one copy for each controller. At some point we
+  // should ref count the memory blocks.
+  for (; iter != m_known_controllers.end(); ++iter) {
+    if (!iter->connection->IsConnected()) {
+      continue;
+    }
+
+    IOStack packet(m_message_builder->pool());
+    packet.Write(reinterpret_cast<const uint8_t*>(&message), sizeof(message));
+    ola::plugin::e131::E133ControllerPDU::PrependPDU(
+        ola::acn::VECTOR_CONTROLLER_DEVICE_ACQUIRED, &packet);
+    m_message_builder->BuildTCPRootE133(
+        &packet, ola::acn::VECTOR_FRAMING_CONTROLLER, 0, 0);
+
+    if (!iter->connection->SendMessage(&packet)) {
+      OLA_WARN << "Failed to send release device to "
+               << iter->connection->Address();
+    }
+  }
+}
+
+void ControllerMesh::InformControllersOfReleasedDevice(
+    const ola::rdm::UID &uid) {
+  struct DeviceReleaseMessage {
+    uint8_t uid[ola::rdm::UID::LENGTH];
+  } __attribute__((packed));
+
+  DeviceReleaseMessage message;
+  uid.Pack(reinterpret_cast<uint8_t*>(&message.uid), ola::rdm::UID::LENGTH);
+
+  ControllerList::iterator iter = m_known_controllers.begin();
+  // TODO(simon): this creates one copy for each controller. At some point we
+  // should ref count the memory blocks.
+  for (; iter != m_known_controllers.end(); ++iter) {
+    if (!iter->connection->IsConnected()) {
+      continue;
+    }
+
+    IOStack packet(m_message_builder->pool());
+    packet.Write(reinterpret_cast<const uint8_t*>(&message), sizeof(message));
+    ola::plugin::e131::E133ControllerPDU::PrependPDU(
+        ola::acn::VECTOR_CONTROLLER_DEVICE_RELEASED, &packet);
+    m_message_builder->BuildTCPRootE133(
+        &packet, ola::acn::VECTOR_FRAMING_CONTROLLER, 0, 0);
+
+    if (!iter->connection->SendMessage(&packet)) {
+      OLA_WARN << "Failed to send release device to "
+               << iter->connection->Address();
+    }
+  }
+}
+
 void ControllerMesh::PrintStats() {
   ControllerList::iterator iter = m_known_controllers.begin();
   std::cout << "------------------" << std::endl;
@@ -184,10 +252,6 @@ bool ControllerMesh::CheckForNewControllers() {
     } else {
       iter->seen = true;
     }
-  }
-
-  if (!m_known_controllers.empty()) {
-    OLA_INFO << m_known_controllers.size() << " known controllers";
   }
 
   // Remove any controllers that no longer exist.

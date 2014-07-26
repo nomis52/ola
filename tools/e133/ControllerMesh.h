@@ -91,6 +91,13 @@ class ControllerMesh {
 
   unsigned int ConnectedControllerCount();
 
+  void InformControllersOfAcquiredDevice(
+      const ola::rdm::UID &uid,
+      const ola::network::IPV4SocketAddress &udp_address);
+
+  void InformControllersOfReleasedDevice(
+      const ola::rdm::UID &uid);
+
   void PrintStats();
 
  private:
@@ -100,7 +107,6 @@ class ControllerMesh {
   };
 
   typedef std::vector<ControllerInfo> ControllerList;
-
 
   RefreshControllersCallback *m_controllers_cb;
   const uint16_t m_our_port;
