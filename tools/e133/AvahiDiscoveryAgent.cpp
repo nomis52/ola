@@ -22,15 +22,15 @@
 
 #include "tools/e133/AvahiDiscoveryAgent.h"
 
-#include <dns_sd.h>
+#include <avahi-common/error.h>
 #include <netinet/in.h>
-#include <stdint.h>
-#include <ola/Callback.h>
 #include <ola/base/Flags.h>
+#include <ola/Callback.h>
 #include <ola/Logging.h>
 #include <ola/network/NetworkUtils.h>
 #include <ola/stl/STLUtils.h>
 #include <ola/thread/CallbackThread.h>
+#include <stdint.h>
 
 #include <map>
 #include <string>
@@ -43,6 +43,7 @@ using ola::network::IPV4Address;
 using ola::network::IPV4SocketAddress;
 using ola::io::SelectServerInterface;
 using ola::thread::MutexLocker;
+using ola::TimeInterval;
 using std::auto_ptr;
 using std::string;
 using std::vector;
@@ -129,6 +130,70 @@ static void client_callback(AvahiClient *client,
       reinterpret_cast<AvahiE133DiscoveryAgent*>(data);
   agent->ClientStateChanged(state, client);
 }
+
+static void reconnect_callback(AvahiTimeout*, void *data) {
+  AvahiE133DiscoveryAgent *agent =
+      reinterpret_cast<AvahiE133DiscoveryAgent*>(data);
+  agent->ReconnectTimeout();
+}
+
+/*
+static void browse_callback(
+    AvahiServiceBrowser *b,
+    AvahiIfIndex interface,
+    AvahiProtocol protocol,
+    AvahiBrowserEvent event,
+    const char *name,
+    const char *type,
+    const char *domain,
+    AvahiLookupResultFlags flags,
+    void* data) {
+
+  AvahiE133DiscoveryAgent *agent =
+      reinterpret_cast<AvahiE133DiscoveryAgent*>(data);
+  (void) agent;
+
+  (void) b;
+  (void) interface;
+  (void) protocol;
+  (void) event;
+  (void) name;
+  (void) type;
+  (void) domain;
+  (void) flags;
+
+   Called whenever a new services becomes available on the LAN or is removed from the LAN 
+
+  switch (event) {
+    case AVAHI_BROWSER_FAILURE:
+      fprintf(stderr, "(Browser) %s\n", avahi_strerror(avahi_client_errno(avahi_service_browser_get_client(b))));
+      avahi_simple_poll_quit(simple_poll);
+      return;
+
+    case AVAHI_BROWSER_NEW:
+      fprintf(stderr, "(Browser) NEW: service '%s' of type '%s' in domain '%s'\n", name, type, domain);
+
+       We ignore the returned resolver object. In the callback
+         function we free it. If the server is terminated before
+         the callback function is called the server will free
+         the resolver for us. 
+
+      if (!(avahi_service_resolver_new(c, interface, protocol, name, type, domain, AVAHI_PROTO_UNSPEC, 0, resolve_callback, c)))
+          fprintf(stderr, "Failed to resolve service '%s': %s\n", name, avahi_strerror(avahi_client_errno(c)));
+
+      break;
+
+    case AVAHI_BROWSER_REMOVE:
+      fprintf(stderr, "(Browser) REMOVE: service '%s' of type '%s' in domain '%s'\n", name, type, domain);
+      break;
+
+    case AVAHI_BROWSER_ALL_FOR_NOW:
+    case AVAHI_BROWSER_CACHE_EXHAUSTED:
+      fprintf(stderr, "(Browser) %s\n", event == AVAHI_BROWSER_CACHE_EXHAUSTED ? "CACHE_EXHAUSTED" : "ALL_FOR_NOW");
+      break;
+  }
+}
+  */
 
 }  // namespace
 
@@ -302,8 +367,8 @@ AvahiE133DiscoveryAgent::AvahiE133DiscoveryAgent()
     : m_threaded_poll(avahi_threaded_poll_new()),
       m_client(NULL),
       m_reconnect_timeout(NULL),
-      m_backoff(new ExponentialBackoffPolicy(TimeInterval(1, 0),
-                                             TimeInterval(60, 0))),
+      m_backoff(new ola::ExponentialBackoffPolicy(TimeInterval(1, 0),
+                                                  TimeInterval(60, 0))),
       m_controller_browser(NULL) {
 }
 
@@ -323,12 +388,19 @@ bool AvahiE133DiscoveryAgent::Init() {
 }
 
 bool AvahiE133DiscoveryAgent::Stop() {
-  avahi_threaded_poll_quit(m_threaded_poll);
+  if (m_threaded_poll) {
+    avahi_threaded_poll_stop(m_threaded_poll);
+  }
 
   if (m_client) {
     avahi_client_free(m_client);
+    m_client = NULL;
   }
-  avahi_threaded_poll_free(m_threaded_poll);
+
+  if (m_threaded_poll) {
+    avahi_threaded_poll_free(m_threaded_poll);
+    m_threaded_poll = NULL;
+  }
 
   /*
   if (m_registration_ref) {
@@ -366,6 +438,8 @@ void AvahiE133DiscoveryAgent::FindControllers(
     vector<E133ControllerInfo> *controllers) {
 
   MutexLocker lock(&m_controllers_mu);
+
+  (void) controllers;
 
   /*
   ControllerResolverList::iterator iter = m_controllers.begin();
@@ -416,7 +490,9 @@ void AvahiE133DiscoveryAgent::ClientStateChanged(AvahiClientState state,
       // Let's drop our registered services. When the server is back
       // in AVAHI_SERVER_RUNNING state we will register them again with the
       // new host name.
-      DeregisterAllServices();
+
+      // DeregisterAllServices();
+
       break;
     case AVAHI_CLIENT_S_REGISTERING:
       // The server records are now being established. This
@@ -429,6 +505,14 @@ void AvahiE133DiscoveryAgent::ClientStateChanged(AvahiClientState state,
     case AVAHI_CLIENT_CONNECTING:
       break;
   }
+}
+
+void AvahiE133DiscoveryAgent::ReconnectTimeout() {
+  if (m_client) {
+    avahi_client_free(m_client);
+    m_client = NULL;
+  }
+  CreateNewClient();
 }
 
 /*
@@ -574,5 +658,39 @@ void AvahiE133DiscoveryAgent::SetUpReconnectTimeout() {
         &tv,
         reconnect_callback,
         this);
+  }
+}
+
+string AvahiE133DiscoveryAgent::ClientStateToString(AvahiClientState state) {
+  switch (state) {
+    case AVAHI_CLIENT_S_REGISTERING:
+      return "AVAHI_CLIENT_S_REGISTERING";
+    case AVAHI_CLIENT_S_RUNNING:
+      return "AVAHI_CLIENT_S_RUNNING";
+    case AVAHI_CLIENT_S_COLLISION:
+      return "AVAHI_CLIENT_S_COLLISION";
+    case AVAHI_CLIENT_FAILURE:
+      return "AVAHI_CLIENT_FAILURE";
+    case AVAHI_CLIENT_CONNECTING:
+      return "AVAHI_CLIENT_CONNECTING";
+    default:
+      return "Unknown state";
+  }
+}
+
+string AvahiE133DiscoveryAgent::GroupStateToString(AvahiEntryGroupState state) {
+  switch (state) {
+    case AVAHI_ENTRY_GROUP_UNCOMMITED:
+      return "AVAHI_ENTRY_GROUP_UNCOMMITED";
+    case AVAHI_ENTRY_GROUP_REGISTERING:
+      return "AVAHI_ENTRY_GROUP_REGISTERING";
+    case AVAHI_ENTRY_GROUP_ESTABLISHED:
+      return "AVAHI_ENTRY_GROUP_ESTABLISHED";
+    case AVAHI_ENTRY_GROUP_COLLISION:
+      return "AVAHI_ENTRY_GROUP_COLLISION";
+    case AVAHI_ENTRY_GROUP_FAILURE:
+      return "AVAHI_ENTRY_GROUP_FAILURE";
+    default:
+      return "Unknown state";
   }
 }

@@ -24,6 +24,7 @@
 #include <avahi-client/client.h>
 #include <avahi-common/thread-watch.h>
 #include <avahi-client/publish.h>
+#include <avahi-client/lookup.h>
 
 #include <ola/base/Macro.h>
 #include <ola/io/Descriptor.h>
@@ -72,25 +73,32 @@ class AvahiE133DiscoveryAgent : public E133DiscoveryAgentInterface {
    */
   void ClientStateChanged(AvahiClientState state, AvahiClient *client);
 
+  /**
+   * @brief Called when the reconnect timeout expires.
+   */
+  void ReconnectTimeout();
+
  private:
   typedef std::vector<class ControllerResolver*> ControllerResolverList;
 
   AvahiThreadedPoll *m_threaded_poll;
   AvahiClient *m_client;
   AvahiTimeout *m_reconnect_timeout;
-  BackoffGenerator m_backoff;
+  ola::BackoffGenerator m_backoff;
 
   AvahiServiceBrowser *m_controller_browser;
 
   /*
 
   ControllerResolverList m_controllers;
-  ola::thread::Mutex m_controllers_mu;
   */
+  ola::thread::Mutex m_controllers_mu;
 
   void CreateNewClient();
   void SetUpReconnectTimeout();
 
+  static std::string ClientStateToString(AvahiClientState state);
+  static std::string GroupStateToString(AvahiEntryGroupState state);
 
   DISALLOW_COPY_AND_ASSIGN(AvahiE133DiscoveryAgent);
 };

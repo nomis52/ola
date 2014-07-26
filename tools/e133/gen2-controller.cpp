@@ -655,14 +655,14 @@ void Gen2Controller::AddDevice(
 void Gen2Controller::RemoveDevicesForController(
     bool is_local,
     const ola::network::IPV4SocketAddress &controller_address) {
-  UIDMap::const_iterator iter = m_uid_map.begin();
+  UIDMap::iterator iter = m_uid_map.begin();
   while (iter != m_uid_map.end()) {
     if (controller_address == iter->second.tcp_socket) {
       OLA_INFO << "Removed UID " << iter->first;
       if (is_local) {
         m_controller_mesh->InformControllersOfReleasedDevice(iter->first);
       }
-      iter = m_uid_map.erase(iter);
+      m_uid_map.erase(iter++);
     } else {
       ++iter;
     }
