@@ -18,19 +18,18 @@
  * Copyright (C) 2013 Simon Newton
  */
 
-#define __STDC_LIMIT_MACROS  // for UINT8_MAX & friends
-
 #include "tools/e133/AvahiDiscoveryAgent.h"
 
-#include <dns_sd.h>
+#include <avahi-common/error.h>
+#include <avahi-client/lookup.h>
+
 #include <netinet/in.h>
-#include <stdint.h>
-#include <ola/Callback.h>
 #include <ola/base/Flags.h>
+#include <ola/Callback.h>
 #include <ola/Logging.h>
 #include <ola/network/NetworkUtils.h>
 #include <ola/stl/STLUtils.h>
-#include <ola/thread/CallbackThread.h>
+#include <stdint.h>
 
 #include <map>
 #include <string>
@@ -43,6 +42,7 @@ using ola::network::IPV4Address;
 using ola::network::IPV4SocketAddress;
 using ola::io::SelectServerInterface;
 using ola::thread::MutexLocker;
+using ola::TimeInterval;
 using std::auto_ptr;
 using std::string;
 using std::vector;
@@ -50,18 +50,16 @@ using std::ostringstream;
 
 DECLARE_uint8(controller_priority);
 
-
 // ControllerResolver
 // ----------------------------------------------------------------------------
-/*
 class ControllerResolver {
  public:
-  ControllerResolver(
-      class IOAdapter *io_adapter,
-      uint32_t interface_index,
-      const std::string &service_name,
-      const std::string &regtype,
-      const std::string &reply_domain);
+  ControllerResolver(AvahiIfIndex interface_index,
+                     AvahiProtocol protocol,
+                     const std::string &service_name,
+                     const std::string &type,
+                     const std::string &domain);
+
   ControllerResolver(const ControllerResolver &other);
   ~ControllerResolver();
 
@@ -74,11 +72,12 @@ class ControllerResolver {
     return out << info.ToString();
   }
 
-  DNSServiceErrorType StartResolution();
+  //DNSServiceErrorType StartResolution();
 
   bool GetControllerResolver(
       E133DiscoveryAgentInterface::E133ControllerInfo *info);
 
+  /*
   void ResolveHandler(
       DNSServiceErrorType errorCode,
       const string &host_target,
@@ -87,20 +86,14 @@ class ControllerResolver {
       const unsigned char *txtRecord);
 
   void UpdateAddress(const IPV4Address &v4_address);
+  */
 
  private:
-  class IOAdapter *m_io_adapter;
-  bool resolve_in_progress;
-  DNSServiceRef m_resolve_ref;
-
-  bool to_addr_in_progress;
-  DNSServiceRef m_to_addr_ref;
-
-  uint32_t interface_index;
-  const std::string service_name;
-  const std::string regtype;
-  const std::string reply_domain;
-  std::string m_host_target;
+  const AvahiIfIndex m_interface_index;
+  const AvahiProtocol m_protocol;
+  const std::string m_service_name;
+  const std::string m_type;
+  const std::string m_domain;
 
   uint8_t m_priority;
   ola::network::IPV4SocketAddress m_resolved_address;
@@ -111,7 +104,6 @@ class ControllerResolver {
 
 const uint8_t ControllerResolver::DEFAULT_PRIORITY = 100;
 const char ControllerResolver::PRIORITY_KEY[] = "priority";
-*/
 
 // static callback functions
 // ----------------------------------------------------------------------------
@@ -130,39 +122,60 @@ static void client_callback(AvahiClient *client,
   agent->ClientStateChanged(state, client);
 }
 
+static void reconnect_callback(AvahiTimeout*, void *data) {
+  AvahiE133DiscoveryAgent *agent =
+      reinterpret_cast<AvahiE133DiscoveryAgent*>(data);
+  agent->ReconnectTimeout();
+}
+
+static void browse_callback(
+    AvahiServiceBrowser *b,
+    AvahiIfIndex interface,
+    AvahiProtocol protocol,
+    AvahiBrowserEvent event,
+    const char *name,
+    const char *type,
+    const char *domain,
+    AvahiLookupResultFlags flags,
+    void* data) {
+
+  AvahiE133DiscoveryAgent *agent =
+      reinterpret_cast<AvahiE133DiscoveryAgent*>(data);
+
+  OLA_INFO << "In browse_callback: "
+           << AvahiE133DiscoveryAgent::BrowseEventToString(event);
+  agent->BrowseEvent(interface, protocol, event, name, type, domain, flags);
+
+  (void) b;
+}
+
 }  // namespace
 
 // ControllerResolver
 // ----------------------------------------------------------------------------
-/*
-ControllerResolver::ControllerResolver(
-    IOAdapter *io_adapter,
-    uint32_t interface_index,
-    const string &service_name,
-    const string &regtype,
-    const string &reply_domain)
-    : m_io_adapter(io_adapter),
-      resolve_in_progress(false),
-      to_addr_in_progress(false),
-      interface_index(interface_index),
-      service_name(service_name),
-      regtype(regtype),
-      reply_domain(reply_domain) {
+ControllerResolver::ControllerResolver(AvahiIfIndex interface_index,
+                                       AvahiProtocol protocol,
+                                       const std::string &service_name,
+                                       const std::string &type,
+                                       const std::string &domain)
+    : m_interface_index(interface_index),
+      m_protocol(protocol),
+      m_service_name(service_name),
+      m_type(type),
+      m_domain(domain) {
 }
 
 ControllerResolver::ControllerResolver(
     const ControllerResolver &other)
-    : m_io_adapter(other.m_io_adapter),
-      resolve_in_progress(false),
-      to_addr_in_progress(false),
-      interface_index(other.interface_index),
-      service_name(other.service_name),
-      regtype(other.regtype),
-      reply_domain(other.reply_domain),
-      m_priority(0) {
+    : m_interface_index(other.m_interface_index),
+      m_protocol(other.m_protocol),
+      m_service_name(other.m_service_name),
+      m_type(other.m_type),
+      m_domain(other.m_domain) {
 }
 
 ControllerResolver::~ControllerResolver() {
+  /*
   if (resolve_in_progress) {
     m_io_adapter->RemoveDescriptor(m_resolve_ref);
     DNSServiceRefDeallocate(m_resolve_ref);
@@ -172,23 +185,25 @@ ControllerResolver::~ControllerResolver() {
     m_io_adapter->RemoveDescriptor(m_to_addr_ref);
     DNSServiceRefDeallocate(m_to_addr_ref);
   }
+  */
 }
 
 bool ControllerResolver::operator==(const ControllerResolver &other) const {
-  return (interface_index == other.interface_index &&
-          service_name == other.service_name &&
-          regtype == other.regtype &&
-          reply_domain == other.reply_domain);
+  return (m_interface_index == other.m_interface_index &&
+          m_protocol == other.m_protocol &&
+          m_service_name == other.m_service_name &&
+          m_type == other.m_type &&
+          m_domain == other.m_domain);
 }
 
 string ControllerResolver::ToString() const {
   std::ostringstream str;
-  str << service_name << "." << regtype << reply_domain << " on iface "
-      << interface_index;
+  str << m_service_name << "." << m_type << m_domain << " on iface "
+      << m_interface_index;
   return str.str();
 }
 
-
+/*
 DNSServiceErrorType ControllerResolver::StartResolution() {
   if (resolve_in_progress) {
     return kDNSServiceErr_NoError;
@@ -209,18 +224,22 @@ DNSServiceErrorType ControllerResolver::StartResolution() {
   }
   return error;
 }
+*/
 
 bool ControllerResolver::GetControllerResolver(
     E133DiscoveryAgentInterface::E133ControllerInfo *info) {
+  /*
   if (m_resolved_address.Host().IsWildcard()) {
     return false;
   }
 
+  */
   info->priority = m_priority;
-  info->address = m_resolved_address;
+  // info->address = m_resolved_address;
   return true;
 }
 
+/*
 void ControllerResolver::ResolveHandler(
     DNSServiceErrorType errorCode,
     const string &host_target,
@@ -302,8 +321,8 @@ AvahiE133DiscoveryAgent::AvahiE133DiscoveryAgent()
     : m_threaded_poll(avahi_threaded_poll_new()),
       m_client(NULL),
       m_reconnect_timeout(NULL),
-      m_backoff(new ExponentialBackoffPolicy(TimeInterval(1, 0),
-                                             TimeInterval(60, 0))),
+      m_backoff(new ola::ExponentialBackoffPolicy(TimeInterval(1, 0),
+                                                  TimeInterval(60, 0))),
       m_controller_browser(NULL) {
 }
 
@@ -323,12 +342,23 @@ bool AvahiE133DiscoveryAgent::Init() {
 }
 
 bool AvahiE133DiscoveryAgent::Stop() {
-  avahi_threaded_poll_quit(m_threaded_poll);
+  if (m_threaded_poll) {
+    avahi_threaded_poll_stop(m_threaded_poll);
+  }
+
+  if (m_controller_browser) {
+    avahi_service_browser_free(m_controller_browser);
+  }
 
   if (m_client) {
     avahi_client_free(m_client);
+    m_client = NULL;
   }
-  avahi_threaded_poll_free(m_threaded_poll);
+
+  if (m_threaded_poll) {
+    avahi_threaded_poll_free(m_threaded_poll);
+    m_threaded_poll = NULL;
+  }
 
   /*
   if (m_registration_ref) {
@@ -349,7 +379,6 @@ bool AvahiE133DiscoveryAgent::FindControllers(BrowseCallback *callback) {
   MutexLocker lock(&m_controllers_mu);
   vector<E133ControllerInfo> controllers;
 
-  /*
   ControllerResolverList::iterator iter = m_controllers.begin();
   for (; iter != m_controllers.end(); ++iter) {
     E133ControllerInfo info;
@@ -357,7 +386,6 @@ bool AvahiE133DiscoveryAgent::FindControllers(BrowseCallback *callback) {
       controllers.push_back(info);
     }
   }
-  */
   callback->Run(controllers);
   return true;
 }
@@ -367,7 +395,8 @@ void AvahiE133DiscoveryAgent::FindControllers(
 
   MutexLocker lock(&m_controllers_mu);
 
-  /*
+  (void) controllers;
+
   ControllerResolverList::iterator iter = m_controllers.begin();
   for (; iter != m_controllers.end(); ++iter) {
     E133ControllerInfo info;
@@ -375,7 +404,6 @@ void AvahiE133DiscoveryAgent::FindControllers(
       controllers->push_back(info);
     }
   }
-  */
 }
 
 void AvahiE133DiscoveryAgent::RegisterController(
@@ -404,6 +432,8 @@ void AvahiE133DiscoveryAgent::ClientStateChanged(AvahiClientState state,
       // name on the network, so it's time to create our services.
       // register_stuff
 
+      LocateControllerServices();
+
       // UpdateServices();
       break;
     case AVAHI_CLIENT_FAILURE:
@@ -416,7 +446,9 @@ void AvahiE133DiscoveryAgent::ClientStateChanged(AvahiClientState state,
       // Let's drop our registered services. When the server is back
       // in AVAHI_SERVER_RUNNING state we will register them again with the
       // new host name.
-      DeregisterAllServices();
+
+      // DeregisterAllServices();
+
       break;
     case AVAHI_CLIENT_S_REGISTERING:
       // The server records are now being established. This
@@ -429,6 +461,47 @@ void AvahiE133DiscoveryAgent::ClientStateChanged(AvahiClientState state,
     case AVAHI_CLIENT_CONNECTING:
       break;
   }
+}
+
+void AvahiE133DiscoveryAgent::ReconnectTimeout() {
+  if (m_client) {
+    avahi_client_free(m_client);
+    m_client = NULL;
+  }
+  CreateNewClient();
+}
+
+void AvahiE133DiscoveryAgent::BrowseEvent(AvahiIfIndex interface,
+                                          AvahiProtocol protocol,
+                                          AvahiBrowserEvent event,
+                                          const char *name,
+                                          const char *type,
+                                          const char *domain,
+                                          AvahiLookupResultFlags flags) {
+  switch (event) {
+    case AVAHI_BROWSER_FAILURE:
+      OLA_WARN << "(Browser) " << avahi_strerror(avahi_client_errno(
+            avahi_service_browser_get_client(m_controller_browser)));
+      return;
+    case AVAHI_BROWSER_NEW:
+      OLA_INFO << "(Browser) NEW: service " << name << " of type " << type
+               << " in domain " << domain;
+
+      AddController(interface, protocol, name, type, domain);
+      break;
+
+    case AVAHI_BROWSER_REMOVE:
+      RemoveController(interface, protocol, name, type, domain);
+      break;
+
+    case AVAHI_BROWSER_ALL_FOR_NOW:
+    case AVAHI_BROWSER_CACHE_EXHAUSTED:
+      OLA_WARN << "(Browser) "
+               << (event == AVAHI_BROWSER_CACHE_EXHAUSTED ? "CACHE_EXHAUSTED" :
+                    "ALL_FOR_NOW");
+      break;
+  }
+  (void) flags;
 }
 
 /*
@@ -460,10 +533,10 @@ void AvahiE133DiscoveryAgent::RunThread() {
 }
 
 void AvahiE133DiscoveryAgent::BrowseResult(DNSServiceFlags flags,
-                                             uint32_t interface_index,
-                                             const string &service_name,
-                                             const string &regtype,
-                                             const string &reply_domain) {
+                                           uint32_t interface_index,
+                                           const string &service_name,
+                                           const string &regtype,
+                                           const string &reply_domain) {
   if (flags & kDNSServiceFlagsAdd) {
     ControllerResolver *controller = new ControllerResolver(
         m_io_adapter.get(), interface_index, service_name, regtype,
@@ -574,5 +647,115 @@ void AvahiE133DiscoveryAgent::SetUpReconnectTimeout() {
         &tv,
         reconnect_callback,
         this);
+  }
+}
+
+void AvahiE133DiscoveryAgent::LocateControllerServices() {
+  m_controller_browser = avahi_service_browser_new(
+      m_client, AVAHI_IF_UNSPEC, AVAHI_PROTO_UNSPEC,
+      E133_CONTROLLER_SERVICE, NULL,
+      static_cast<AvahiLookupFlags>(0), browse_callback, this);
+  if (!m_controller_browser) {
+    OLA_WARN << "Failed to start browsing for " << E133_CONTROLLER_SERVICE
+             << ": " << avahi_strerror(avahi_client_errno(m_client));
+  }
+}
+
+void AvahiE133DiscoveryAgent::AddController(AvahiIfIndex interface,
+                                            AvahiProtocol protocol,
+                                            const std::string &name,
+                                            const std::string &type,
+                                            const std::string &domain) {
+  ControllerResolver *controller = new ControllerResolver(
+      interface, protocol, name, type, domain);
+
+  /*
+  DNSServiceErrorType error = controller->StartResolution();
+  */
+  OLA_INFO << "Starting resolution for " << *controller;
+
+  /*
+  if (error == kDNSServiceErr_NoError) {
+    m_controllers.push_back(controller);
+    OLA_INFO << "Added " << *controller << " at " << m_controllers.back();
+  } else {
+    OLA_WARN << "Failed to start resolution for " << *controller;
+    delete controller;
+  }
+
+       We ignore the returned resolver object. In the callback
+         function we free it. If the server is terminated before
+         the callback function is called the server will free
+         the resolver for us. 
+
+      if (!(avahi_service_resolver_new(c, interface, protocol, name, type, domain, AVAHI_PROTO_UNSPEC, 0, resolve_callback, c)))
+          fprintf(stderr, "Failed to resolve service '%s': %s\n", name, avahi_strerror(avahi_client_errno(c)));
+
+      (void) interface;
+      (void) flags;
+      (void) protocol;
+  */
+}
+
+void AvahiE133DiscoveryAgent::RemoveController(AvahiIfIndex interface,
+                                               AvahiProtocol protocol,
+                                               const std::string &name,
+                                               const std::string &type,
+                                               const std::string &domain) {
+  OLA_WARN << "(Browser) REMOVE: service " << name << " of type " << type
+           << " in domain " << domain;
+
+  (void) interface;
+  (void) protocol;
+}
+
+string AvahiE133DiscoveryAgent::ClientStateToString(AvahiClientState state) {
+  switch (state) {
+    case AVAHI_CLIENT_S_REGISTERING:
+      return "AVAHI_CLIENT_S_REGISTERING";
+    case AVAHI_CLIENT_S_RUNNING:
+      return "AVAHI_CLIENT_S_RUNNING";
+    case AVAHI_CLIENT_S_COLLISION:
+      return "AVAHI_CLIENT_S_COLLISION";
+    case AVAHI_CLIENT_FAILURE:
+      return "AVAHI_CLIENT_FAILURE";
+    case AVAHI_CLIENT_CONNECTING:
+      return "AVAHI_CLIENT_CONNECTING";
+    default:
+      return "Unknown state";
+  }
+}
+
+string AvahiE133DiscoveryAgent::GroupStateToString(AvahiEntryGroupState state) {
+  switch (state) {
+    case AVAHI_ENTRY_GROUP_UNCOMMITED:
+      return "AVAHI_ENTRY_GROUP_UNCOMMITED";
+    case AVAHI_ENTRY_GROUP_REGISTERING:
+      return "AVAHI_ENTRY_GROUP_REGISTERING";
+    case AVAHI_ENTRY_GROUP_ESTABLISHED:
+      return "AVAHI_ENTRY_GROUP_ESTABLISHED";
+    case AVAHI_ENTRY_GROUP_COLLISION:
+      return "AVAHI_ENTRY_GROUP_COLLISION";
+    case AVAHI_ENTRY_GROUP_FAILURE:
+      return "AVAHI_ENTRY_GROUP_FAILURE";
+    default:
+      return "Unknown state";
+  }
+}
+
+string AvahiE133DiscoveryAgent::BrowseEventToString(AvahiBrowserEvent state) {
+  switch (state) {
+    case AVAHI_BROWSER_NEW:
+      return "AVAHI_BROWSER_NEW";
+    case AVAHI_BROWSER_REMOVE:
+      return "AVAHI_BROWSER_REMOVE";
+    case AVAHI_BROWSER_CACHE_EXHAUSTED:
+      return "AVAHI_BROWSER_CACHE_EXHAUSTED";
+    case AVAHI_BROWSER_ALL_FOR_NOW:
+      return "AVAHI_BROWSER_ALL_FOR_NOW";
+    case AVAHI_BROWSER_FAILURE:
+      return "AVAHI_BROWSER_FAILURE";
+    default:
+      return "Unknown event";
   }
 }

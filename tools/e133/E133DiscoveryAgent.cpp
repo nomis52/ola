@@ -44,7 +44,7 @@ E133DiscoveryAgentInterface* E133DiscoveryAgentFactory::New() {
   return new BonjourE133DiscoveryAgent();
 #endif
 #ifdef HAVE_AVAHI
-  return new AvahiDiscoveryAgent();
+  return new AvahiE133DiscoveryAgent();
 #endif
   return NULL;
 }

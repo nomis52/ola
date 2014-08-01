@@ -24,6 +24,7 @@
 #include <avahi-client/client.h>
 #include <avahi-common/thread-watch.h>
 #include <avahi-client/publish.h>
+#include <avahi-client/lookup.h>
 
 #include <ola/base/Macro.h>
 #include <ola/io/Descriptor.h>
@@ -57,14 +58,6 @@ class AvahiE133DiscoveryAgent : public E133DiscoveryAgentInterface {
   void RegisterController(
       const ola::network::IPV4SocketAddress &controller_address);
 
-  /*
-  void BrowseResult(DNSServiceFlags flags,
-                    uint32_t interface_index,
-                    const std::string &service_name,
-                    const std::string &regtype,
-                    const std::string &reply_domain);
-  */
-
   // Called from the static callback functions.
 
   /**
@@ -72,25 +65,52 @@ class AvahiE133DiscoveryAgent : public E133DiscoveryAgentInterface {
    */
   void ClientStateChanged(AvahiClientState state, AvahiClient *client);
 
+  /**
+   * @brief Called when the reconnect timeout expires.
+   */
+  void ReconnectTimeout();
+
+  void BrowseEvent(AvahiIfIndex interface,
+                   AvahiProtocol protocol,
+                   AvahiBrowserEvent event,
+                   const char *name,
+                   const char *type,
+                   const char *domain,
+                   AvahiLookupResultFlags flags);
+
+  static std::string BrowseEventToString(AvahiBrowserEvent state);
+
  private:
   typedef std::vector<class ControllerResolver*> ControllerResolverList;
 
   AvahiThreadedPoll *m_threaded_poll;
   AvahiClient *m_client;
   AvahiTimeout *m_reconnect_timeout;
-  BackoffGenerator m_backoff;
+  ola::BackoffGenerator m_backoff;
 
   AvahiServiceBrowser *m_controller_browser;
 
-  /*
-
   ControllerResolverList m_controllers;
   ola::thread::Mutex m_controllers_mu;
-  */
 
   void CreateNewClient();
   void SetUpReconnectTimeout();
 
+  void LocateControllerServices();
+  void AddController(AvahiIfIndex interface,
+                     AvahiProtocol protocol,
+                     const std::string &name,
+                     const std::string &type,
+                     const std::string &domain);
+
+  void RemoveController(AvahiIfIndex interface,
+                        AvahiProtocol protocol,
+                        const std::string &name,
+                        const std::string &type,
+                        const std::string &domain);
+
+  static std::string ClientStateToString(AvahiClientState state);
+  static std::string GroupStateToString(AvahiEntryGroupState state);
 
   DISALLOW_COPY_AND_ASSIGN(AvahiE133DiscoveryAgent);
 };
