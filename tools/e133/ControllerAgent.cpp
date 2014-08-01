@@ -219,7 +219,7 @@ void ControllerAgent::AttemptConnection() {
 }
 
 bool ControllerAgent::PickController(IPV4SocketAddress *controller) {
-  vector<E133ControllerInfo> controllers;
+  ControllerEntryList controllers;
   m_controllers_cb->Run(&controllers);
   OLA_INFO << "I know about " << controllers.size() << " controllers";
 
@@ -232,7 +232,7 @@ bool ControllerAgent::PickController(IPV4SocketAddress *controller) {
   }
 
   // loop through the new controller list, if
-  vector<E133ControllerInfo>::iterator new_iter = controllers.begin();
+  ControllerEntryList::iterator new_iter = controllers.begin();
   for (; new_iter != controllers.end(); ++new_iter) {
     ControllerList::iterator iter = m_known_controllers.begin();
     for (; iter != m_known_controllers.end(); ++iter) {

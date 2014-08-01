@@ -13,8 +13,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * DiscoveryAgent.h
- * The Interface for DNS-SD Discovery.
+ * E133DiscoveryAgent.h
+ * The Interface for E1.33 DNS-SD Discovery & Registration.
  * Copyright (C) 2013 Simon Newton
  */
 
@@ -25,22 +25,20 @@
 #include <ola/base/Macro.h>
 #include <ola/Callback.h>
 #include <ola/network/SocketAddress.h>
+#include <string>
 #include <vector>
 
+#include "tools/e133/E133ControllerEntry.h"
+
 /**
- * @brief The interface to DNS-SD operations like register, browse etc.
+ * @brief The interface to E1.33 DNS-SD operations like register, browse etc.
  */
 class E133DiscoveryAgentInterface {
  public:
-  struct E133ControllerInfo {
-    ola::network::IPV4SocketAddress address;
-    uint8_t priority;
-  };
-
   /**
    * @brief The callback run as a result of FindControllers.
    */
-  typedef ola::SingleUseCallback1<void, const std::vector<E133ControllerInfo>&>
+  typedef ola::SingleUseCallback1<void, const ControllerEntryList&>
       BrowseCallback;
 
   virtual ~E133DiscoveryAgentInterface() {}
@@ -65,8 +63,7 @@ class E133DiscoveryAgentInterface {
   /**
    * @brief A non-callback version of FindControllers
    */
-  virtual void FindControllers(
-      std::vector<E133ControllerInfo> *controllers) = 0;
+  virtual void FindControllers(ControllerEntryList *controllers) = 0;
 
   /**
    * @brief Register the SocketAddress as an E1.33 controller.

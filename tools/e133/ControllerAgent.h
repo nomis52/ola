@@ -38,6 +38,7 @@
 #include "plugins/e131/e131/E133Inflator.h"
 #include "plugins/e131/e131/E133StatusInflator.h"
 #include "plugins/e131/e131/RootInflator.h"
+#include "tools/e133/E133ControllerEntry.h"
 #include "tools/e133/E133HealthCheckedConnection.h"
 #include "tools/e133/MessageQueue.h"
 #include "tools/e133/TCPConnectionStats.h"
@@ -60,19 +61,13 @@
  */
 class ControllerAgent {
  public:
-  struct E133ControllerInfo {
-    ola::network::IPV4SocketAddress address;
-    uint8_t priority;
-  };
-
   /**
    * @brief The callback run as a result of FindControllers.
    *
    * The callback populates the first argument with the list of known
    * controllers.
    */
-  typedef ola::Callback1<void, std::vector<E133ControllerInfo>*>
-      RefreshControllersCallback;
+  typedef ola::Callback1<void, ControllerEntryList*> RefreshControllersCallback;
 
   /**
    * @brief Create a new ControllerAgent.

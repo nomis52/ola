@@ -176,26 +176,14 @@ void Gen2Device::ConnectToController() {
  * Get the list if controllers, either from the options passed to the
  * constructor or from the E133DiscoveryAgent.
  */
-void Gen2Device::ControllerList(
-      vector<ControllerAgent::E133ControllerInfo> *controllers) {
+void Gen2Device::ControllerList(ControllerEntryList *controllers) {
   if (m_options.controller.Host().IsWildcard()) {
-    // TODO(simon): make this struct common somewhere
-    vector<E133DiscoveryAgentInterface::E133ControllerInfo> e133_controllers;
-    m_discovery_agent->FindControllers(&e133_controllers);
-
-    vector<E133DiscoveryAgentInterface::E133ControllerInfo>::iterator iter =
-      e133_controllers.begin();
-    for (; iter != e133_controllers.end(); ++iter) {
-      ControllerAgent::E133ControllerInfo info;
-      info.address = iter->address;
-      info.priority = iter->priority;
-      controllers->push_back(info);
-    }
+    m_discovery_agent->FindControllers(controllers);
   } else {
-    ControllerAgent::E133ControllerInfo info;
-    info.address = m_options.controller;
-    info.priority = 100;
-    controllers->push_back(info);
+    E133ControllerEntry controller_entry;
+    controller_entry.address = m_options.controller;
+    controller_entry.priority = 100;
+    controllers->push_back(controller_entry);
   }
 }
 

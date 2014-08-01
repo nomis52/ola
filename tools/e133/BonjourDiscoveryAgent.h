@@ -51,7 +51,7 @@ class BonjourE133DiscoveryAgent : public E133DiscoveryAgentInterface {
 
   bool FindControllers(BrowseCallback *callback);
 
-  void FindControllers(std::vector<E133ControllerInfo> *controllers);
+  void FindControllers(ControllerEntryList *controllers);
 
   void RegisterController(
       const ola::network::IPV4SocketAddress &controller_address);

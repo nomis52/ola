@@ -49,6 +49,7 @@
 #include "plugins/e131/e131/RootInflator.h"
 #include "plugins/e131/e131/TCPTransport.h"
 #include "tools/e133/ControllerMesh.h"
+#include "tools/e133/E133ControllerEntry.h"
 #include "tools/e133/E133DiscoveryAgent.h"
 #include "tools/e133/E133HealthCheckedConnection.h"
 #include "tools/e133/MessageQueue.h"
@@ -271,11 +272,10 @@ void Gen2Controller::Stop() {
 
 void Gen2Controller::GetControllerList(
     vector<IPV4SocketAddress> *controllers) {
-  vector<E133DiscoveryAgentInterface::E133ControllerInfo> e133_controllers;
+  ControllerEntryList e133_controllers;
   m_discovery_agent->FindControllers(&e133_controllers);
 
-  vector<E133DiscoveryAgentInterface::E133ControllerInfo>::iterator iter =
-    e133_controllers.begin();
+  ControllerEntryList::iterator iter = e133_controllers.begin();
   for (; iter != e133_controllers.end(); ++iter) {
     controllers->push_back(iter->address);
   }

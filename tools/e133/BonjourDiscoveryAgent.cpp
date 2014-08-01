@@ -75,8 +75,7 @@ class ControllerResolver {
 
   DNSServiceErrorType StartResolution();
 
-  bool GetControllerResolver(
-      E133DiscoveryAgentInterface::E133ControllerInfo *info);
+  bool GetControllerResolver(E133ControllerEntry *controller_entry);
 
   void ResolveHandler(
       DNSServiceErrorType errorCode,
@@ -378,13 +377,13 @@ DNSServiceErrorType ControllerResolver::StartResolution() {
 }
 
 bool ControllerResolver::GetControllerResolver(
-    E133DiscoveryAgentInterface::E133ControllerInfo *info) {
+    E133ControllerEntry *controller_entry) {
   if (m_resolved_address.Host().IsWildcard()) {
     return false;
   }
 
-  info->priority = m_priority;
-  info->address = m_resolved_address;
+  controller_entry->priority = m_priority;
+  controller_entry->address = m_resolved_address;
   return true;
 }
 
@@ -520,13 +519,13 @@ bool BonjourE133DiscoveryAgent::FindControllers(BrowseCallback *callback) {
   }
 
   MutexLocker lock(&m_controllers_mu);
-  vector<E133ControllerInfo> controllers;
+  ControllerEntryList controllers;
 
   ControllerResolverList::iterator iter = m_controllers.begin();
   for (; iter != m_controllers.end(); ++iter) {
-    E133ControllerInfo info;
-    if ((*iter)->GetControllerResolver(&info)) {
-      controllers.push_back(info);
+    E133ControllerEntry controller_entry;
+    if ((*iter)->GetControllerResolver(&controller_entry)) {
+      controllers.push_back(controller_entry);
     }
   }
   callback->Run(controllers);
@@ -534,15 +533,15 @@ bool BonjourE133DiscoveryAgent::FindControllers(BrowseCallback *callback) {
 }
 
 void BonjourE133DiscoveryAgent::FindControllers(
-    vector<E133ControllerInfo> *controllers) {
+    ControllerEntryList *controllers) {
 
   MutexLocker lock(&m_controllers_mu);
 
   ControllerResolverList::iterator iter = m_controllers.begin();
   for (; iter != m_controllers.end(); ++iter) {
-    E133ControllerInfo info;
-    if ((*iter)->GetControllerResolver(&info)) {
-      controllers->push_back(info);
+    E133ControllerEntry controller_entry;
+    if ((*iter)->GetControllerResolver(&controller_entry)) {
+      controllers->push_back(controller_entry);
     }
   }
 }

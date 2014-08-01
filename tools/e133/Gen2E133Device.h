@@ -90,8 +90,7 @@ class Gen2Device {
 
   void ConnectToController();
 
-  void ControllerList(
-      std::vector<ControllerAgent::E133ControllerInfo> *controllers);
+  void ControllerList(ControllerEntryList *controllers);
 
   void EndpointRequest(
       const ola::plugin::e131::TransportHeader *transport_header,
