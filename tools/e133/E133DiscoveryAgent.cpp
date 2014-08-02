@@ -36,8 +36,15 @@
 const char E133DiscoveryAgentInterface::E133_CONTROLLER_SERVICE[] =
     "_rdmnet-ctrl._tcp";
 
-DEFINE_uint8(controller_priority, 50,
-             "The priority to use to register our service with");
+const char E133DiscoveryAgentInterface::DEFAULT_SCOPE[] = "default";
+
+const char E133DiscoveryAgentInterface::E133_VERSION_KEY[] = "e133vers";
+const char E133DiscoveryAgentInterface::MANUFACTURER_KEY[] = "manuf";
+const char E133DiscoveryAgentInterface::MODEL_KEY[] = "model";
+const char E133DiscoveryAgentInterface::PRIORITY_KEY[] = "priority";
+const char E133DiscoveryAgentInterface::SCOPE_KEY[] = "confScope";
+const char E133DiscoveryAgentInterface::TXT_VERSION_KEY[] = "txtvers";
+const char E133DiscoveryAgentInterface::UID_KEY[] = "uid";
 
 E133DiscoveryAgentInterface* E133DiscoveryAgentFactory::New() {
 #ifdef HAVE_DNSSD

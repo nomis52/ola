@@ -32,48 +32,88 @@
 
 /**
  * @brief The interface to E1.33 DNS-SD operations like register, browse etc.
+ *
+ * The E133DiscoveryAgentInterface encapsulates the DNS-SD operations of
+ * registering and browsing for controllers.
+ *
+ * Two implementations exists: Bonjour (Apple) and Avahi.
+ *
+ * Since the implementation of this interface depends on which DNS-SD library
+ * is available on the platform, the E133DiscoveryAgentFactory::New() should be
+ * used to create instances of E133DiscoveryAgentInterface.
  */
 class E133DiscoveryAgentInterface {
  public:
-  /**
-   * @brief The callback run as a result of FindControllers.
-   */
-  typedef ola::SingleUseCallback1<void, const ControllerEntryList&>
-      BrowseCallback;
-
   virtual ~E133DiscoveryAgentInterface() {}
 
   /**
-   * @brief Initialize the DiscoveryAgent.
+   * @brief Start the DiscoveryAgent.
+   *
+   * In both the Avahi and Bonjour implementations this starts the DNS-SD
+   * thread.
    */
-  virtual bool Init() = 0;
+  virtual bool Start() = 0;
 
   /**
-   * @brief Once stop is called, the callback will no longer be executed.
+   * @brief Stop the DiscoveryAgent.
+   *
+   * Once this returns any threads will have been terminated.
    */
   virtual bool Stop() = 0;
 
   /**
-   * @brief Find E1.33 controllers.
-   * @param callback the callback to run when controllers are found.
-   *   Ownership of the callback is transferred.
+   * @brief Change the scope for discovery.
+   *
+   * The scope corresponds to the sub_type in DNS-SD. If the scope is the empty
+   * string, all controllers will be discovered.
+   *
+   * Once this method returns, FindControllers() will only return controllers
+   * in the current scope.
    */
-  virtual bool FindControllers(BrowseCallback *callback) = 0;
+  virtual void SetScope(const std::string &scope) = 0;
 
   /**
-   * @brief A non-callback version of FindControllers
+   * @brief Get a list of the known controllers.
+   * @param[out] controllers A vector to be populated with the known
+   *   controllers.
    */
   virtual void FindControllers(ControllerEntryList *controllers) = 0;
 
   /**
    * @brief Register the SocketAddress as an E1.33 controller.
+   * @param controller The controller entry to register in DNS-SD.
    *
-   * The current implementation only allows this to be called once.
+   * If this is called twice with a controller with the same IPV4SocketAddress
+   * the TXT field will be updated with the newer values.
+   *
+   * Registration may be performed in a separate thread.
    */
-  virtual void RegisterController(
-      const ola::network::IPV4SocketAddress &controller) = 0;
+  virtual void RegisterController(const E133ControllerEntry &controller) = 0;
+
+  /**
+   * @brief De-Register the SocketAddress as an E1.33 controller.
+   * @param controller_address The SocketAddress to de-register. This should be
+   * the same as what was in the E133ControllerEntry that was passed to
+   * RegisterController().
+   *
+   * DeRegistration may be performed in a separate thread.
+   */
+  virtual void DeRegisterController(
+      const ola::network::IPV4SocketAddress &controller_address) = 0;
 
   static const char E133_CONTROLLER_SERVICE[];
+  static const char DEFAULT_SCOPE[];
+
+  static const char E133_VERSION_KEY[];
+  static const char MANUFACTURER_KEY[];
+  static const char MODEL_KEY[];
+  static const char PRIORITY_KEY[];
+  static const char SCOPE_KEY[];
+  static const char TXT_VERSION_KEY[];
+  static const char UID_KEY[];
+
+  static const uint8_t TXT_VERSION = 1;
+  static const uint8_t E133_VERSION = 1;
 };
 
 /**

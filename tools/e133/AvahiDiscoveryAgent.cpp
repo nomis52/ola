@@ -48,8 +48,6 @@ using std::string;
 using std::vector;
 using std::ostringstream;
 
-DECLARE_uint8(controller_priority);
-
 // ControllerResolver
 // ----------------------------------------------------------------------------
 class ControllerResolver {
@@ -72,7 +70,7 @@ class ControllerResolver {
     return out << info.ToString();
   }
 
-  //DNSServiceErrorType StartResolution();
+  // DNSServiceErrorType StartResolution();
 
   bool GetControllerResolver(
       E133DiscoveryAgentInterface::E133ControllerInfo *info);

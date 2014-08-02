@@ -62,6 +62,9 @@ DEFINE_uint32(expected_devices, 1,
               "Time how long it takes until this many devices connect.");
 DEFINE_bool(stop_after_all_devices, false,
             "Exit once all devices connect");
+DEFINE_uint8(controller_priority, 50,
+             "The priority to use to register our service with");
+DEFINE_string(e133_scope, "default", "The E1.33 scope to use.");
 
 using ola::NewCallback;
 using ola::NewSingleCallback;
@@ -141,6 +144,7 @@ class Gen2Controller {
   UIDMap m_uid_map;
 
   const IPV4SocketAddress m_listen_address;
+  uint8_t m_priority;
   ola::ExportMap m_export_map;
   ola::io::SelectServer m_ss;
   ola::network::TCPSocketFactory m_tcp_socket_factory;
@@ -159,6 +163,7 @@ class Gen2Controller {
 
   void ShowHelp();
   void ShowDevices();
+  void ChangePriority(bool increase);
   void ShowSummary();
   void ShowUIDMap();
 
@@ -207,11 +212,14 @@ class Gen2Controller {
     bool is_local,
     const ola::network::IPV4SocketAddress &controller_address);
 
+  static const uint8_t MAX_PRIORITY = 100;
+
   DISALLOW_COPY_AND_ASSIGN(Gen2Controller);
 };
 
 Gen2Controller::Gen2Controller(const Options &options)
     : m_listen_address(options.controller),
+      m_priority(FLAGS_controller_priority),
       m_ss(&m_export_map),
       m_tcp_socket_factory(
           NewCallback(this, &Gen2Controller::OnTCPConnect)),
@@ -223,7 +231,6 @@ Gen2Controller::Gen2Controller(const Options &options)
                       ola::NewCallback(this, &Gen2Controller::Input)) {
   E133DiscoveryAgentFactory discovery_agent_factory;
   m_discovery_agent.reset(discovery_agent_factory.New());
-  m_discovery_agent->Init();
 
   m_root_inflator.AddInflator(&m_e133_inflator);
   m_e133_inflator.AddInflator(&m_e133_controller_inflator);
@@ -245,8 +252,20 @@ bool Gen2Controller::Start() {
     return false;
   }
   OLA_INFO << "Listening on " << m_listen_address;
+
+  E133ControllerEntry controller;
+  controller.address = m_listen_address;
+  controller.priority = m_priority;
+  controller.scope = FLAGS_e133_scope.str();
+  controller.model = "Test Controller";
+
   if (m_discovery_agent.get()) {
-    m_discovery_agent->RegisterController(m_listen_address);
+    m_discovery_agent->RegisterController(controller);
+  }
+
+  if (!m_discovery_agent->Start()) {
+    OLA_INFO << "Failed to start E133DiscoveryAgent, trying again";
+    return false;
   }
 
   m_controller_mesh.reset(new ControllerMesh(
@@ -283,11 +302,12 @@ void Gen2Controller::GetControllerList(
 
 void Gen2Controller::ShowHelp() {
   cout << "------------------" << endl;
-  cout << "c - Show peer controllers." << endl;
-  cout << "d - Show connected devices." << endl;
-  cout << "h - Show this message." << endl;
-  cout << "s - Show summary." << endl;
-  cout << "u - Show UID map." << endl;
+  cout << "c   : Show peer controllers." << endl;
+  cout << "d   : Show connected devices." << endl;
+  cout << "h   : Show this message." << endl;
+  cout << "s   : Show summary." << endl;
+  cout << "u   : Show UID map." << endl;
+  cout << "-/+ : Increase / Decrease Priority." << endl;
   cout << "q - Quit." << endl;
   cout << "------------------" << endl;
 }
@@ -299,6 +319,25 @@ void Gen2Controller::ShowDevices() {
     cout << iter->first << endl;
   }
   cout << "------------------" << endl;
+}
+
+void Gen2Controller::ChangePriority(bool increase) {
+  if (increase) {
+    m_priority = m_priority == MAX_PRIORITY ? 0 : m_priority + 1;
+  } else {
+    m_priority = m_priority ? m_priority - 1 : MAX_PRIORITY;
+  }
+
+  OLA_INFO << "Changed priority to " << static_cast<int>(m_priority);
+
+  E133ControllerEntry controller;
+  controller.address = m_listen_address;
+  controller.priority = m_priority;
+  controller.scope = FLAGS_e133_scope.str();
+
+  if (m_discovery_agent.get()) {
+    m_discovery_agent->RegisterController(controller);
+  }
 }
 
 void Gen2Controller::ShowSummary() {
@@ -340,6 +379,12 @@ void Gen2Controller::Input(char c) {
       break;
     case 'u':
       ShowUIDMap();
+      break;
+    case '-':
+      ChangePriority(false);
+      break;
+    case '+':
+      ChangePriority(true);
       break;
     default:
       break;

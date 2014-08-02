@@ -23,6 +23,8 @@
 
 #include <stdint.h>
 #include <ola/network/SocketAddress.h>
+#include <ola/rdm/UID.h>
+#include <string>
 #include <vector>
 
 /**
@@ -31,13 +33,47 @@
  * The information in this struct is from the A and TXT records in DNS-SD.
  */
 struct E133ControllerEntry {
+ public:
+  /** @brief The service name of the controller */
+  std::string service_name;
+
   /** @brief The address of the controller */
   ola::network::IPV4SocketAddress address;
+
   /** @brief The controller's priority */
   uint8_t priority;
 
-  // TODO(simon): Add the other fields we agreed upon here.
+  /** @brief The controller's UID */
+  ola::rdm::UID uid;
+
+  /** @brief The controller's scope */
+  std::string scope;
+
+  /** @brief The version of E1.33 this controller is using */
+  uint8_t e133_version;
+
+  /** @brief The controller's model. */
+  std::string model;
+
+  /** @brief The controller's manufacturer. */
+  std::string manufacturer;
+
+  E133ControllerEntry()
+      : uid(0, 0),
+        e133_version(E133_VERSION),
+        manufacturer("Open Lighting") {
+  }
+
+  static const uint8_t E133_VERSION = 1;
+
+  std::string ToString() const;
+
+  friend std::ostream& operator<<(std::ostream &out,
+                                  const E133ControllerEntry &entry) {
+    return out << entry.ToString();
+  }
 };
+
 
 typedef std::vector<E133ControllerEntry> ControllerEntryList;
 

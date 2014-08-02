@@ -32,6 +32,7 @@
 #include <ola/stl/STLUtils.h>
 #include <ola/thread/CallbackThread.h>
 
+#include <algorithm>
 #include <map>
 #include <string>
 #include <vector>
@@ -48,8 +49,14 @@ using std::string;
 using std::vector;
 using std::ostringstream;
 
-DECLARE_uint8(controller_priority);
-
+std::string GenerateE133SubType(const std::string &scope) {
+  string service_type(E133DiscoveryAgentInterface::E133_CONTROLLER_SERVICE);
+  if (!scope.empty()) {
+    service_type.append(",_");
+    service_type.append(scope);
+  }
+  return service_type;
+}
 
 // ControllerResolver
 // ----------------------------------------------------------------------------
@@ -61,12 +68,21 @@ class ControllerResolver {
       const std::string &service_name,
       const std::string &regtype,
       const std::string &reply_domain);
-  ControllerResolver(const ControllerResolver &other);
   ~ControllerResolver();
 
-  bool operator==(const ControllerResolver &other) const;
+  bool operator==(const ControllerResolver &other) const {
+    return (interface_index == other.interface_index &&
+            service_name == other.service_name &&
+            regtype == other.regtype &&
+            reply_domain == other.reply_domain);
+  }
 
-  std::string ToString() const;
+  std::string ToString() const {
+    std::ostringstream str;
+    str << service_name << "." << regtype << reply_domain << " on iface "
+        << interface_index;
+    return str.str();
+  }
 
   friend std::ostream& operator<<(std::ostream &out,
                                   const ControllerResolver &info) {
@@ -75,16 +91,18 @@ class ControllerResolver {
 
   DNSServiceErrorType StartResolution();
 
-  bool GetControllerResolver(E133ControllerEntry *controller_entry);
+  bool GetControllerResolver(E133ControllerEntry *controller_entry) const;
 
   void ResolveHandler(
       DNSServiceErrorType errorCode,
       const string &host_target,
       uint16_t port,
-      uint16_t txtLen,
-      const unsigned char *txtRecord);
+      uint16_t txt_length,
+      const unsigned char *txt_data);
 
-  void UpdateAddress(const IPV4Address &v4_address);
+  void UpdateAddress(const IPV4Address &v4_address) {
+    m_resolved_address.Host(v4_address);
+  }
 
  private:
   class IOAdapter *m_io_adapter;
@@ -101,14 +119,63 @@ class ControllerResolver {
   std::string m_host_target;
 
   uint8_t m_priority;
+  std::string m_scope;
+  ola::rdm::UID m_uid;
+  std::string m_model;
+  std::string m_manufacturer;
+
   ola::network::IPV4SocketAddress m_resolved_address;
 
+  bool ExtractString(uint16_t txt_length,
+                     const unsigned char *txt_data,
+                     const std::string &key,
+                     std::string *dest);
+  bool ExtractInt(uint16_t txt_length,
+                  const unsigned char *txt_data,
+                  const std::string &key, unsigned int *dest);
+  bool CheckVersionMatches(
+    uint16_t txt_length,
+    const unsigned char *txt_data,
+    const string &key, unsigned int version);
+
   static const uint8_t DEFAULT_PRIORITY;
-  static const char PRIORITY_KEY[];
+
+  DISALLOW_COPY_AND_ASSIGN(ControllerResolver);
 };
 
 const uint8_t ControllerResolver::DEFAULT_PRIORITY = 100;
-const char ControllerResolver::PRIORITY_KEY[] = "priority";
+
+// ControllerRegistration
+// ----------------------------------------------------------------------------
+class ControllerRegistration {
+ public:
+  explicit ControllerRegistration(class IOAdapter *io_adapter)
+      : m_io_adapter(io_adapter),
+        m_registration_ref(NULL) {
+  }
+
+  ~ControllerRegistration();
+
+  bool RegisterOrUpdate(const E133ControllerEntry &controller);
+
+  void RegisterEvent(DNSServiceErrorType error_code, const std::string &name,
+                     const std::string &type, const std::string &domain);
+
+ private:
+  class IOAdapter *m_io_adapter;
+  string m_scope;
+  string m_last_txt_data;
+  DNSServiceRef m_registration_ref;
+
+  void CancelRegistration();
+  bool UpdateRecord(const std::string &txt_data);
+
+  // TODO(simon): Depend on what the Avahi API is we may want to move this to a
+  // common function.
+  std::string BuildTxtRecord(const E133ControllerEntry &controller);
+
+  DISALLOW_COPY_AND_ASSIGN(ControllerRegistration);
+};
 
 // static callback functions
 // ----------------------------------------------------------------------------
@@ -140,13 +207,13 @@ static void ResolveServiceCallback(DNSServiceRef sdRef,
                                    const char *fullname,
                                    const char *hosttarget,
                                    uint16_t port, /* In network byte order */
-                                   uint16_t txtLen,
-                                   const unsigned char *txtRecord,
+                                   uint16_t txt_length,
+                                   const unsigned char *txt_data,
                                    void *context) {
   ControllerResolver *controller_resolver =
       reinterpret_cast<ControllerResolver*>(context);
   controller_resolver->ResolveHandler(
-      errorCode, hosttarget, NetworkToHost(port), txtLen, txtRecord);
+      errorCode, hosttarget, NetworkToHost(port), txt_length, txt_data);
   (void) sdRef;
   (void) flags;
   (void) fullname;
@@ -189,12 +256,9 @@ static void RegisterCallback(DNSServiceRef service,
                              const char *type,
                              const char *domain,
                              void *context) {
-  if (error_code != kDNSServiceErr_NoError) {
-    OLA_WARN << "DNSServiceRegister for " << name << "." << type << domain
-             << " returned error " << error_code;
-  } else {
-    OLA_INFO << "Registered: " << name << "." << type << domain;
-  }
+  ControllerRegistration *controller_registration =
+      reinterpret_cast<ControllerRegistration*>(context);
+  controller_registration->RegisterEvent(error_code, name, type, domain);
   (void) service;
   (void) flags;
   (void) context;
@@ -298,8 +362,7 @@ void IOAdapter::RemoveDescriptor(DNSServiceRef service_ref) {
   m_descriptors.erase(iter);
 }
 
-
-// IOAdapter
+// ControllerResolver
 // ----------------------------------------------------------------------------
 ControllerResolver::ControllerResolver(
     IOAdapter *io_adapter,
@@ -313,19 +376,8 @@ ControllerResolver::ControllerResolver(
       interface_index(interface_index),
       service_name(service_name),
       regtype(regtype),
-      reply_domain(reply_domain) {
-}
-
-ControllerResolver::ControllerResolver(
-    const ControllerResolver &other)
-    : m_io_adapter(other.m_io_adapter),
-      resolve_in_progress(false),
-      to_addr_in_progress(false),
-      interface_index(other.interface_index),
-      service_name(other.service_name),
-      regtype(other.regtype),
-      reply_domain(other.reply_domain),
-      m_priority(0) {
+      reply_domain(reply_domain),
+      m_uid(0, 0) {
 }
 
 ControllerResolver::~ControllerResolver() {
@@ -339,21 +391,6 @@ ControllerResolver::~ControllerResolver() {
     DNSServiceRefDeallocate(m_to_addr_ref);
   }
 }
-
-bool ControllerResolver::operator==(const ControllerResolver &other) const {
-  return (interface_index == other.interface_index &&
-          service_name == other.service_name &&
-          regtype == other.regtype &&
-          reply_domain == other.reply_domain);
-}
-
-string ControllerResolver::ToString() const {
-  std::ostringstream str;
-  str << service_name << "." << regtype << reply_domain << " on iface "
-      << interface_index;
-  return str.str();
-}
-
 
 DNSServiceErrorType ControllerResolver::StartResolution() {
   if (resolve_in_progress) {
@@ -377,12 +414,17 @@ DNSServiceErrorType ControllerResolver::StartResolution() {
 }
 
 bool ControllerResolver::GetControllerResolver(
-    E133ControllerEntry *controller_entry) {
+    E133ControllerEntry *controller_entry) const {
   if (m_resolved_address.Host().IsWildcard()) {
     return false;
   }
 
+  controller_entry->service_name = service_name;
   controller_entry->priority = m_priority;
+  controller_entry->scope = m_scope;
+  controller_entry->uid = m_uid;
+  controller_entry->model = m_model;
+  controller_entry->manufacturer = m_manufacturer;
   controller_entry->address = m_resolved_address;
   return true;
 }
@@ -391,40 +433,54 @@ void ControllerResolver::ResolveHandler(
     DNSServiceErrorType errorCode,
     const string &host_target,
     uint16_t port,
-    uint16_t txtLen,
-    const unsigned char *txtRecord) {
-  // Do we need to remove here or let this continue running?
-  // m_io_adapter->RemoveDescriptor(m_);
-
+    uint16_t txt_length,
+    const unsigned char *txt_data) {
   if (errorCode != kDNSServiceErr_NoError) {
     OLA_WARN << "Failed to resolve " << this->ToString();
     return;
   }
 
-  OLA_INFO << "Got resolv response " << host_target << ":"
-           << port;
+  OLA_INFO << "Got resolv response " << host_target << ":" << port;
 
-  uint8_t priority = DEFAULT_PRIORITY;
-  if (TXTRecordContainsKey(txtLen, txtRecord, PRIORITY_KEY)) {
-    uint8_t value_length = 0;
-    const void *value = TXTRecordGetValuePtr(txtLen, txtRecord, PRIORITY_KEY,
-                                             &value_length);
-    if (value == NULL) {
-      OLA_WARN << "Missing " << PRIORITY_KEY << " from " << host_target;
-    } else {
-      const string value_str(
-          reinterpret_cast<const char*>(value), value_length);
-      if (!ola::StringToInt(value_str, &priority)) {
-        OLA_WARN << "Invalid value for " << PRIORITY_KEY << " in "
-                 << host_target;
-      }
-    }
-  } else {
-    OLA_WARN << host_target << " is missing key " << PRIORITY_KEY
-             << " in the TXT record";
+  if (!CheckVersionMatches(txt_length, txt_data,
+                           E133DiscoveryAgentInterface::TXT_VERSION_KEY,
+                           E133DiscoveryAgentInterface::TXT_VERSION)) {
+    return;
   }
 
-  m_priority = priority;
+  if (!CheckVersionMatches(txt_length, txt_data,
+                           E133DiscoveryAgentInterface::E133_VERSION_KEY,
+                           E133DiscoveryAgentInterface::E133_VERSION)) {
+    return;
+  }
+
+  unsigned int priority;
+  if (!ExtractInt(txt_length, txt_data,
+                  E133DiscoveryAgentInterface::PRIORITY_KEY, &priority)) {
+    return;
+  }
+
+  if (!ExtractString(txt_length, txt_data,
+                     E133DiscoveryAgentInterface::SCOPE_KEY, &m_scope)) {
+    return;
+  }
+
+  // These are optional?
+  string uid_str;
+  if (ExtractString(txt_length, txt_data, E133DiscoveryAgentInterface::UID_KEY,
+                    &uid_str)) {
+    auto_ptr<ola::rdm::UID> uid(ola::rdm::UID::FromString(uid_str));
+    if (uid.get()) {
+      m_uid = *uid;
+    }
+  }
+
+  ExtractString(txt_length, txt_data, E133DiscoveryAgentInterface::MODEL_KEY,
+                &m_model);
+  ExtractString(txt_length, txt_data,
+                E133DiscoveryAgentInterface::MANUFACTURER_KEY, &m_manufacturer);
+
+  m_priority = static_cast<uint8_t>(priority);
   m_resolved_address.Port(port);
 
   if (host_target == m_host_target) {
@@ -456,28 +512,238 @@ void ControllerResolver::ResolveHandler(
   }
 }
 
-void ControllerResolver::UpdateAddress(const IPV4Address &v4_address) {
-  m_resolved_address.Host(v4_address);
-  OLA_INFO << "New controller at " << m_resolved_address;
+bool ControllerResolver::ExtractString(
+    uint16_t txt_length,
+    const unsigned char *txt_data,
+    const string &key, string *dest) {
+  if (!TXTRecordContainsKey(txt_length, txt_data, key.c_str())) {
+    OLA_WARN << service_name << " is missing " << key << " from the TXT record";
+    return false;
+  }
+
+  uint8_t value_length = 0;
+  const void *value = TXTRecordGetValuePtr(
+      txt_length, txt_data, key.c_str(), &value_length);
+  if (value == NULL) {
+    OLA_WARN << service_name << " is missing a value for " << key
+             << " from the TXT record";
+  }
+  dest->assign(reinterpret_cast<const char*>(value), value_length);
+  return true;
+}
+
+bool ControllerResolver::ExtractInt(
+    uint16_t txt_length,
+    const unsigned char *txt_data,
+    const string &key, unsigned int *dest) {
+  string value;
+  if (!ExtractString(txt_length, txt_data, key, &value))
+    return false;
+
+  if (!ola::StringToInt(value, dest)) {
+    OLA_WARN << service_name << " has an invalid value of " << value
+             << " for " << key;
+    return false;
+  }
+  return true;
+}
+
+bool ControllerResolver::CheckVersionMatches(
+    uint16_t txt_length,
+    const unsigned char *txt_data,
+    const string &key, unsigned int expected_version) {
+  unsigned int version;
+  if (!ExtractInt(txt_length, txt_data, key, &version)) {
+    return false;
+  }
+
+  if (version != expected_version) {
+    OLA_WARN << "Unknown version for " << key << " : " << version << " for "
+             << service_name;
+    return false;
+  }
+  return true;
+}
+
+// ControllerRegistration
+// ----------------------------------------------------------------------------
+
+ControllerRegistration::~ControllerRegistration() {
+  CancelRegistration();
+}
+
+bool ControllerRegistration::RegisterOrUpdate(
+    const E133ControllerEntry &controller) {
+  if (m_registration_ref) {
+    // This is an update.
+    const string txt_data = BuildTxtRecord(controller);
+    if (m_last_txt_data == txt_data) {
+      return true;
+    }
+
+    OLA_INFO << "Updating controller registration for " << controller.address;
+    // If the scope isn't changing, this is just an update.
+    if (controller.scope == m_scope) {
+      return UpdateRecord(txt_data);
+    }
+
+    // Otherwise we need to cancel this registration and continue with the new
+    // one.
+    CancelRegistration();
+  }
+
+  string service_name;
+  if (controller.service_name.empty()) {
+    ostringstream str;
+    str << "OLA Controller " << controller.address.Port();
+    service_name = str.str();
+    str.str("");
+  } else {
+    service_name = controller.service_name;
+  }
+
+  const string txt_data = BuildTxtRecord(controller);
+
+  string service_type = GenerateE133SubType(controller.scope);
+
+  OLA_INFO << "Adding " << service_name << " : "
+           << service_type << ":" << controller.address.Port();
+  DNSServiceErrorType error = DNSServiceRegister(
+      &m_registration_ref,
+      0, 0, service_name.c_str(),
+      service_type.c_str(),
+      NULL,  // default domain
+      NULL,  // use default host name
+      HostToNetwork(controller.address.Port()),
+      txt_data.size(), txt_data.c_str(),
+      &RegisterCallback,  // call back function
+      this);  // no context
+
+  if (error != kDNSServiceErr_NoError) {
+    OLA_WARN << "DNSServiceRegister returned " << error;
+    return false;
+  }
+
+  m_last_txt_data = txt_data;
+  m_scope = controller.scope;
+  m_io_adapter->AddDescriptor(m_registration_ref);
+  return true;
+}
+
+void ControllerRegistration::RegisterEvent(
+    DNSServiceErrorType error_code, const std::string &name,
+    const std::string &type, const std::string &domain) {
+  if (error_code != kDNSServiceErr_NoError) {
+    OLA_WARN << "DNSServiceRegister for " << name << "." << type << domain
+             << " returned error " << error_code;
+  } else {
+    OLA_INFO << "Registered: " << name << "." << type << domain;
+  }
+}
+
+void ControllerRegistration::CancelRegistration() {
+  if (m_registration_ref) {
+    m_io_adapter->RemoveDescriptor(m_registration_ref);
+    DNSServiceRefDeallocate(m_registration_ref);
+    m_registration_ref = NULL;
+  }
+}
+
+bool ControllerRegistration::UpdateRecord(const string &txt_data) {
+  // Update required
+  DNSServiceErrorType error = DNSServiceUpdateRecord(
+      m_registration_ref, NULL,
+      0, txt_data.size(), txt_data.c_str(), 0);
+  if (error != kDNSServiceErr_NoError) {
+    OLA_WARN << "DNSServiceUpdateRecord returned " << error;
+    return false;
+  }
+  m_last_txt_data = txt_data;
+  return true;
+}
+
+string ControllerRegistration::BuildTxtRecord(
+    const E133ControllerEntry &controller) {
+  ostringstream str;
+  vector<string> records;
+
+  str << E133DiscoveryAgentInterface::TXT_VERSION_KEY << "="
+      << static_cast<int>(E133DiscoveryAgentInterface::TXT_VERSION);
+  records.push_back(str.str());
+  str.str("");
+
+  str << E133DiscoveryAgentInterface::PRIORITY_KEY << "="
+      << static_cast<int>(controller.priority);
+  records.push_back(str.str());
+  str.str("");
+
+  str << E133DiscoveryAgentInterface::SCOPE_KEY << "="
+      << controller.scope;
+  records.push_back(str.str());
+  str.str("");
+
+  str << E133DiscoveryAgentInterface::E133_VERSION_KEY << "="
+      << static_cast<int>(controller.e133_version);
+  records.push_back(str.str());
+  str.str("");
+
+  if (controller.uid.ManufacturerId() != 0 && controller.uid.DeviceId() != 0) {
+    str << E133DiscoveryAgentInterface::UID_KEY << "=" << controller.uid;
+    records.push_back(str.str());
+    str.str("");
+  }
+
+  if (!controller.model.empty()) {
+    str << E133DiscoveryAgentInterface::MODEL_KEY << "=" << controller.model;
+    records.push_back(str.str());
+    str.str("");
+  }
+
+  if (!controller.manufacturer.empty()) {
+    str << E133DiscoveryAgentInterface::MANUFACTURER_KEY << "="
+        << controller.manufacturer;
+    records.push_back(str.str());
+    str.str("");
+  }
+
+  string txt_data;
+  vector<string>::const_iterator iter = records.begin();
+  for (; iter != records.end(); ++iter) {
+    txt_data.append(1, static_cast<char>(iter->size()));
+    txt_data.append(*iter);
+  }
+  return txt_data;
 }
 
 // BonjourE133DiscoveryAgent
 // ----------------------------------------------------------------------------
 BonjourE133DiscoveryAgent::BonjourE133DiscoveryAgent()
     : m_io_adapter(new IOAdapter(&m_ss)),
-      m_registration_ref(NULL) {
+      m_discovery_service_ref(NULL),
+      m_scope(DEFAULT_SCOPE),
+      m_changing_scope(false) {
 }
 
 BonjourE133DiscoveryAgent::~BonjourE133DiscoveryAgent() {
   Stop();
 }
 
-bool BonjourE133DiscoveryAgent::Init() {
-  // Probably want to pass a future to the thread here.
+bool BonjourE133DiscoveryAgent::Start() {
+  ola::thread::Future<bool> f;
+
+  m_ss.Execute(ola::NewSingleCallback(
+      this,
+      &BonjourE133DiscoveryAgent::TriggerScopeChange, &f));
+
   m_thread.reset(new ola::thread::CallbackThread(ola::NewSingleCallback(
       this, &BonjourE133DiscoveryAgent::RunThread)));
   m_thread->Start();
-  return true;
+
+  bool ok = f.Get();
+  if (!ok) {
+    Stop();
+  }
+  return ok;
 }
 
 bool BonjourE133DiscoveryAgent::Stop() {
@@ -486,55 +752,30 @@ bool BonjourE133DiscoveryAgent::Stop() {
     m_thread->Join();
     m_thread.reset();
   }
-
-  if (m_registration_ref) {
-    m_io_adapter->RemoveDescriptor(m_registration_ref);
-    DNSServiceRefDeallocate(m_registration_ref);
-    m_registration_ref = NULL;
-  }
-
-  /*
-  ServiceRefs::iterator iter = m_refs.begin();
-  for (; iter != m_refs.end(); ++iter) {
-    m_ss.RemoveReadDescriptor(iter->descriptor);
-    delete iter->descriptor;
-    DNSServiceRefDeallocate(iter->service_ref);
-  }
-  */
-
-  /*
-  Future<bool> f;
-  m_ss.Execute(NewSingleCallback(
-      this,
-      &BonjourE133DiscoveryAgent::InternalBrowseForService, service_type, callback,
-      &f));
-  return f.Get();
-  */
   return true;
 }
 
-bool BonjourE133DiscoveryAgent::FindControllers(BrowseCallback *callback) {
-  if (!callback) {
-    return false;
-  }
-
+void BonjourE133DiscoveryAgent::SetScope(const std::string &scope) {
+  // We need to ensure that FindControllers only returns controllers in the new
+  // scope. So we empty the list here and trigger a scope change in the DNS-SD
+  // thread.
   MutexLocker lock(&m_controllers_mu);
-  ControllerEntryList controllers;
+  m_orphaned_controllers.reserve(
+      m_orphaned_controllers.size() + m_controllers.size());
+  copy(m_controllers.begin(), m_controllers.end(),
+       back_inserter(m_orphaned_controllers));
+  m_controllers.clear();
+  m_scope = scope;
+  m_changing_scope = true;
 
-  ControllerResolverList::iterator iter = m_controllers.begin();
-  for (; iter != m_controllers.end(); ++iter) {
-    E133ControllerEntry controller_entry;
-    if ((*iter)->GetControllerResolver(&controller_entry)) {
-      controllers.push_back(controller_entry);
-    }
-  }
-  callback->Run(controllers);
-  return true;
+  m_ss.Execute(ola::NewSingleCallback(
+      this,
+      &BonjourE133DiscoveryAgent::TriggerScopeChange,
+      reinterpret_cast<ola::thread::Future<bool>*>(NULL)));
 }
 
 void BonjourE133DiscoveryAgent::FindControllers(
     ControllerEntryList *controllers) {
-
   MutexLocker lock(&m_controllers_mu);
 
   ControllerResolverList::iterator iter = m_controllers.begin();
@@ -547,37 +788,17 @@ void BonjourE133DiscoveryAgent::FindControllers(
 }
 
 void BonjourE133DiscoveryAgent::RegisterController(
-    const IPV4SocketAddress &controller) {
+    const E133ControllerEntry &controller) {
   m_ss.Execute(ola::NewSingleCallback(
       this,
       &BonjourE133DiscoveryAgent::InternalRegisterService, controller));
 }
 
-void BonjourE133DiscoveryAgent::RunThread() {
-  OLA_INFO << "Starting Discovery thread";
-
-  DNSServiceErrorType error = DNSServiceBrowse(
-      &m_discovery_service_ref,
-      0,
-      kDNSServiceInterfaceIndexAny,
-      E133_CONTROLLER_SERVICE,
-      NULL,  // domain
-      &BrowseServiceCallback,
-      reinterpret_cast<void*>(this));
-
-  if (error != kDNSServiceErr_NoError) {
-    OLA_WARN << "DNSServiceBrowse returned " << error;
-    // f->Set(false);
-    return;
-  }
-
-  // f->Set(true);
-  m_io_adapter->AddDescriptor(m_discovery_service_ref);
-  m_ss.Run();
-
-  m_io_adapter->RemoveDescriptor(m_discovery_service_ref);
-  DNSServiceRefDeallocate(m_discovery_service_ref);
-  OLA_INFO << "Done with discovery thread";
+void BonjourE133DiscoveryAgent::DeRegisterController(
+      const ola::network::IPV4SocketAddress &controller_address) {
+  m_ss.Execute(ola::NewSingleCallback(
+      this, &BonjourE133DiscoveryAgent::InternalDeRegisterService,
+      controller_address));
 }
 
 void BonjourE133DiscoveryAgent::BrowseResult(DNSServiceFlags flags,
@@ -585,6 +806,12 @@ void BonjourE133DiscoveryAgent::BrowseResult(DNSServiceFlags flags,
                                              const string &service_name,
                                              const string &regtype,
                                              const string &reply_domain) {
+  MutexLocker lock(&m_controllers_mu);
+  if (m_changing_scope) {
+    // We're in the middle of changing scopes so don't change m_controllers.
+    return;
+  }
+
   if (flags & kDNSServiceFlagsAdd) {
     ControllerResolver *controller = new ControllerResolver(
         m_io_adapter.get(), interface_index, service_name, regtype,
@@ -618,37 +845,76 @@ void BonjourE133DiscoveryAgent::BrowseResult(DNSServiceFlags flags,
   }
 }
 
-void BonjourE133DiscoveryAgent::InternalRegisterService(
-    IPV4SocketAddress controller_address) {
-  ostringstream str;
-  str << "controller-" << controller_address.Port();
-  const string service = str.str();
-  str.str("");
+void BonjourE133DiscoveryAgent::RunThread() {
+  OLA_INFO << "Starting Discovery thread";
+  m_ss.Run();
 
-  str << "priority=" << static_cast<int>(FLAGS_controller_priority);
+  {
+    MutexLocker lock(&m_controllers_mu);
+    StopResolution();
+  }
+  OLA_INFO << "Done with discovery thread";
+}
 
-  OLA_INFO << "Adding " << service << " : " << E133_CONTROLLER_SERVICE << ":"
-           << controller_address.Port() << ", txt: " << str.str();
+void BonjourE133DiscoveryAgent::TriggerScopeChange(
+    ola::thread::Future<bool> *f) {
+  MutexLocker lock(&m_controllers_mu);
+  StopResolution();
 
-  string txt_data;
-  txt_data.append(1, static_cast<char>(str.str().size()));
-  txt_data.append(str.str());
+  m_changing_scope = false;
 
-  DNSServiceErrorType error = DNSServiceRegister(
-      &m_registration_ref,
-      0, 0, service.c_str(), E133_CONTROLLER_SERVICE,
-      NULL,  // default domain
-      NULL,  // use default host name
-      HostToNetwork(controller_address.Port()),
-      txt_data.size(), txt_data.c_str(),
-      &RegisterCallback,  // call back function
-      NULL);  // no context
+  string service_type = GenerateE133SubType(m_scope);
+  OLA_INFO << "Starting browse op " << service_type;
+  DNSServiceErrorType error = DNSServiceBrowse(
+      &m_discovery_service_ref,
+      0,
+      kDNSServiceInterfaceIndexAny,
+      service_type.c_str(),
+      NULL,  // domain
+      &BrowseServiceCallback,
+      reinterpret_cast<void*>(this));
 
   if (error != kDNSServiceErr_NoError) {
-    OLA_WARN << "DNSServiceRegister returned " << error;
+    OLA_WARN << "DNSServiceBrowse returned " << error;
+    if (f) {
+      f->Set(false);
+    }
     return;
   }
 
-  // TODO(simon): allow this to be called more than once.
-  m_io_adapter->AddDescriptor(m_registration_ref);
+  if (f) {
+    f->Set(true);
+  }
+
+  m_io_adapter->AddDescriptor(m_discovery_service_ref);
+}
+
+void BonjourE133DiscoveryAgent::StopResolution() {
+  // Tear down the existing resolution
+  ola::STLDeleteElements(&m_controllers);
+  ola::STLDeleteElements(&m_orphaned_controllers);
+
+  if (m_discovery_service_ref) {
+    m_io_adapter->RemoveDescriptor(m_discovery_service_ref);
+    DNSServiceRefDeallocate(m_discovery_service_ref);
+    m_discovery_service_ref = NULL;
+  }
+}
+
+void BonjourE133DiscoveryAgent::InternalRegisterService(
+    E133ControllerEntry controller) {
+  std::pair<ControllerRegistrationList::iterator, bool> p =
+      m_registrations.insert(
+          ControllerRegistrationList::value_type(controller.address, NULL));
+
+  if (p.first->second == NULL) {
+    p.first->second = new ControllerRegistration(m_io_adapter.get());
+  }
+  ControllerRegistration *registration = p.first->second;
+  registration->RegisterOrUpdate(controller);
+}
+
+void BonjourE133DiscoveryAgent::InternalDeRegisterService(
+      ola::network::IPV4SocketAddress controller_address) {
+  ola::STLRemoveAndDelete(&m_registrations, controller_address);
 }

@@ -44,6 +44,7 @@ endif
 # Code required by both the controller and device.
 tools_e133_libolae133common_la_SOURCES = \
     tools/e133/E133ControllerEntry.h \
+    tools/e133/E133ControllerEntry.cpp \
     tools/e133/E133DiscoveryAgent.cpp \
     tools/e133/E133DiscoveryAgent.h \
     tools/e133/E133HealthCheckedConnection.cpp \

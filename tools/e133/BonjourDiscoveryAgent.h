@@ -26,9 +26,9 @@
 #include <ola/base/Macro.h>
 #include <ola/io/Descriptor.h>
 #include <ola/io/SelectServer.h>
-// #include <ola/thread/Future.h>
-#include <ola/thread/Mutex.h>
 #include <ola/thread/CallbackThread.h>
+#include <ola/thread/Future.h>
+#include <ola/thread/Mutex.h>
 #include <map>
 #include <memory>
 #include <string>
@@ -45,19 +45,23 @@ class BonjourE133DiscoveryAgent : public E133DiscoveryAgentInterface {
   BonjourE133DiscoveryAgent();
   ~BonjourE133DiscoveryAgent();
 
-  bool Init();
+  bool Start();
 
   bool Stop();
 
-  bool FindControllers(BrowseCallback *callback);
+  void SetScope(const std::string &scope);
 
   void FindControllers(ControllerEntryList *controllers);
 
-  void RegisterController(
+  void RegisterController(const E133ControllerEntry &controller);
+
+  void DeRegisterController(
       const ola::network::IPV4SocketAddress &controller_address);
 
-  void RunThread();
-
+  /**
+   * @brief Called by our static callback function when a new controller is
+   * found.
+   */
   void BrowseResult(DNSServiceFlags flags,
                     uint32_t interface_index,
                     const std::string &service_name,
@@ -66,18 +70,33 @@ class BonjourE133DiscoveryAgent : public E133DiscoveryAgentInterface {
 
  private:
   typedef std::vector<class ControllerResolver*> ControllerResolverList;
+  typedef std::map<ola::network::IPV4SocketAddress,
+                   class ControllerRegistration*> ControllerRegistrationList;
 
   ola::io::SelectServer m_ss;
   std::auto_ptr<ola::thread::CallbackThread> m_thread;
   std::auto_ptr<class IOAdapter> m_io_adapter;
   DNSServiceRef m_discovery_service_ref;
-  DNSServiceRef m_registration_ref;
 
+  // These are all protected by m_controllers_mu
   ControllerResolverList m_controllers;
+  ControllerResolverList m_orphaned_controllers;
+  std::string m_scope;
+  bool m_changing_scope;
+
   ola::thread::Mutex m_controllers_mu;
 
-  void InternalRegisterService(
+  ControllerRegistrationList m_registrations;
+
+  void RunThread();
+  void TriggerScopeChange(ola::thread::Future<bool> *f);
+  void StopResolution();
+
+  void InternalRegisterService(E133ControllerEntry controller_entry);
+  void InternalDeRegisterService(
       ola::network::IPV4SocketAddress controller_address);
+
+  static std::string BuildTxtRecord(const E133ControllerEntry &controller);
 
   DISALLOW_COPY_AND_ASSIGN(BonjourE133DiscoveryAgent);
 };

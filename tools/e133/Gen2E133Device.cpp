@@ -86,7 +86,6 @@ Gen2Device::Gen2Device(const Options &options)
   if (m_options.controller.Host().IsWildcard()) {
     E133DiscoveryAgentFactory discovery_agent_factory;
     m_discovery_agent.reset(discovery_agent_factory.New());
-    m_discovery_agent->Init();
   }
 }
 
@@ -97,6 +96,10 @@ Gen2Device::~Gen2Device() {
 }
 
 bool Gen2Device::Run() {
+  if (!m_discovery_agent->Start()) {
+    return false;
+  }
+
   // Setup the UDP socket
   if (!m_udp_socket.Init()) {
     return false;
