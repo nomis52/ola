@@ -846,14 +846,12 @@ void BonjourE133DiscoveryAgent::BrowseResult(DNSServiceFlags flags,
 }
 
 void BonjourE133DiscoveryAgent::RunThread() {
-  OLA_INFO << "Starting Discovery thread";
   m_ss.Run();
 
   {
     MutexLocker lock(&m_controllers_mu);
     StopResolution();
   }
-  OLA_INFO << "Done with discovery thread";
 }
 
 void BonjourE133DiscoveryAgent::TriggerScopeChange(

@@ -34,6 +34,7 @@
 #include <ola/io/SelectServer.h>
 #include <ola/io/StdinHandler.h>
 #include <ola/network/TCPSocketFactory.h>
+#include <ola/rdm/UID.h>
 #include <ola/stl/STLUtils.h>
 #include <signal.h>
 
@@ -65,6 +66,7 @@ DEFINE_bool(stop_after_all_devices, false,
 DEFINE_uint8(controller_priority, 50,
              "The priority to use to register our service with");
 DEFINE_string(e133_scope, "default", "The E1.33 scope to use.");
+DEFINE_string(uid, "7a70:10000000", "The base UID of the controller.");
 
 using ola::NewCallback;
 using ola::NewSingleCallback;
@@ -115,9 +117,10 @@ class Gen2Controller {
   struct Options {
     // The controller to connect to.
     IPV4SocketAddress controller;
+    ola::rdm::UID controller_uid;
 
-    explicit Options(const IPV4SocketAddress &controller)
-        : controller(controller) {
+    explicit Options(const ola::rdm::UID &controller_uid)
+        : controller_uid(controller_uid) {
     }
   };
 
@@ -144,6 +147,7 @@ class Gen2Controller {
   UIDMap m_uid_map;
 
   const IPV4SocketAddress m_listen_address;
+  const ola::rdm::UID m_controller_uid;
   uint8_t m_priority;
   ola::ExportMap m_export_map;
   ola::io::SelectServer m_ss;
@@ -219,6 +223,7 @@ class Gen2Controller {
 
 Gen2Controller::Gen2Controller(const Options &options)
     : m_listen_address(options.controller),
+      m_controller_uid(options.controller_uid),
       m_priority(FLAGS_controller_priority),
       m_ss(&m_export_map),
       m_tcp_socket_factory(
@@ -258,6 +263,7 @@ bool Gen2Controller::Start() {
   controller.priority = m_priority;
   controller.scope = FLAGS_e133_scope.str();
   controller.model = "Test Controller";
+  controller.uid = m_controller_uid;
 
   if (m_discovery_agent.get()) {
     m_discovery_agent->RegisterController(controller);
@@ -296,7 +302,9 @@ void Gen2Controller::GetControllerList(
 
   ControllerEntryList::iterator iter = e133_controllers.begin();
   for (; iter != e133_controllers.end(); ++iter) {
-    controllers->push_back(iter->address);
+    if (iter->uid != m_controller_uid) {
+      controllers->push_back(iter->address);
+    }
   }
 }
 
@@ -307,7 +315,7 @@ void Gen2Controller::ShowHelp() {
   cout << "h   : Show this message." << endl;
   cout << "s   : Show summary." << endl;
   cout << "u   : Show UID map." << endl;
-  cout << "-/+ : Increase / Decrease Priority." << endl;
+  cout << "-/+ : Increase / Decrease Controller Priority." << endl;
   cout << "q - Quit." << endl;
   cout << "------------------" << endl;
 }
@@ -334,6 +342,7 @@ void Gen2Controller::ChangePriority(bool increase) {
   controller.address = m_listen_address;
   controller.priority = m_priority;
   controller.scope = FLAGS_e133_scope.str();
+  controller.uid = m_controller_uid;
 
   if (m_discovery_agent.get()) {
     m_discovery_agent->RegisterController(controller);
@@ -730,6 +739,18 @@ int main(int argc, char *argv[]) {
   ola::ParseFlags(&argc, argv);
   ola::InitLoggingFromFlags();
 
+  std::auto_ptr<UID> uid(UID::FromString(FLAGS_uid));
+  if (!uid.get()) {
+    OLA_WARN << "Invalid UID: " << FLAGS_uid;
+    ola::DisplayUsage();
+    exit(ola::EXIT_USAGE);
+  }
+
+  // Add the port to the UID
+  UID controller_uid(uid->ManufacturerId(),
+                     uid->DeviceId() + FLAGS_listen_port);
+  OLA_INFO << "Controller UID is " << controller_uid;
+
   // Convert the controller's IP address
   IPV4Address controller_ip;
   if (!FLAGS_listen_ip.str().empty() &&
@@ -739,9 +760,9 @@ int main(int argc, char *argv[]) {
   }
 
   ola::InstallSignal(SIGINT, InteruptSignal);
-  controller = new Gen2Controller(
-      Gen2Controller::Options(
-          IPV4SocketAddress(controller_ip, FLAGS_listen_port)));
+  Gen2Controller::Options options(controller_uid);
+  options.controller = IPV4SocketAddress(controller_ip, FLAGS_listen_port);
+  controller = new Gen2Controller(options);
   controller->Start();
   delete controller;
   controller = NULL;
