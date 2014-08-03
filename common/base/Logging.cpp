@@ -36,6 +36,7 @@
 #include <syslog.h>
 #endif
 
+#include <unistd.h>
 #include <iostream>
 #include <string>
 #include "ola/Logging.h"
