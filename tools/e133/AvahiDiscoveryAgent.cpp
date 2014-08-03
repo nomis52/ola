@@ -43,10 +43,200 @@ using ola::network::IPV4SocketAddress;
 using ola::io::SelectServerInterface;
 using ola::thread::MutexLocker;
 using ola::TimeInterval;
+using ola::NewSingleCallback;
 using std::auto_ptr;
 using std::string;
 using std::vector;
 using std::ostringstream;
+
+class OlaPoll;
+
+// The Avahi data structures.
+struct AvahiWatch {
+  OlaPoll *poll;
+
+  AvahiWatchCallback callback;
+  void *userdata;
+};
+
+struct AvahiTimeout {
+  OlaPoll *poll;
+  ola::thread::timeout_id id;
+
+  AvahiTimeoutCallback callback;
+  void  *userdata;
+};
+
+
+// The Ola implementation of an AvahiPoll.
+//-----------------------------------------------------------------------------
+class OlaPoll {
+ public:
+  explicit OlaPoll(SelectServerInterface *ss);
+
+  const AvahiPoll* GetPoll() const {
+    return &m_poll;
+  }
+
+  AvahiWatch* WatchNew(
+    int fd,
+    AvahiWatchEvent event,
+    AvahiWatchCallback callback,
+    void *userdata);
+  void WatchFree(AvahiWatch *watch);
+  void WatchUpdate(AvahiWatch *watch, AvahiWatchEvent event);
+  AvahiWatchEvent WatchGetEvents(AvahiWatch *watch);
+
+  AvahiTimeout* TimeoutNew(
+    const struct timeval *tv,
+    AvahiTimeoutCallback callback,
+    void *userdata);
+
+  void TimeoutFree(AvahiTimeout *timeout);
+
+  void TimeoutUpdate(AvahiTimeout *timeout,
+                     const struct timeval *tv);
+
+ private:
+  SelectServerInterface *m_ss;
+  AvahiPoll m_poll;
+};
+
+// Static callbacks
+//-----------------------------------------------------------------------------
+static AvahiWatch* ola_watch_new(
+    const AvahiPoll *api,
+    int fd,
+    AvahiWatchEvent event,
+    AvahiWatchCallback callback,
+    void *userdata) {
+  OlaPoll *poll = reinterpret_cast<OlaPoll*>(api->userdata);
+  return poll->WatchNew(fd, event, callback, userdata);
+}
+
+static void ola_watch_new(AvahiWatch *watch) {
+  watch->poll->WatchFree(watch);
+}
+
+static void ola_watch_free(AvahiWatch *watch) {
+  watch->poll->WatchFree(watch);
+}
+
+static void watch_update(AvahiWatch *watch, AvahiWatchEvent event) {
+  watch->poll->WatchUpdate(watch, event);
+}
+
+static AvahiWatchEvent ola_watch_get_events(AvahiWatch *watch) {
+  return watch->poll->WatchGetEvents(watch);
+}
+
+static AvahiTimeout* ola_timeout_new(
+    const AvahiPoll *api,
+    const struct timeval *tv,
+    AvahiTimeoutCallback callback,
+    void *userdata) {
+  OlaPoll *poll = reinterpret_cast<OlaPoll*>(api->userdata);
+  return poll->TimeoutNew(tv, callback, userdata);
+}
+
+static void ola_timeout_free(AvahiTimeout *timeout) {
+  timeout->poll->TimeoutFree(timeout);
+}
+
+static void ola_timeout_update(AvahiTimeout *timeout,
+                               const struct timeval *tv) {
+  timeout->poll->TimeoutUpdate(timeout, tv);
+}
+
+void ExecuteTimeout(AvahiTimeout *timeout) {
+  timeout->id = ola::thread::INVALID_TIMEOUT;
+  timeout->callback(timeout, timeout->userdata);
+}
+
+// OlaPoll implementation
+//-----------------------------------------------------------------------------
+OlaPoll::OlaPoll(SelectServerInterface *ss)
+    : m_ss(ss) {
+  m_poll.userdata = this;
+  m_poll.watch_new = ola_watch_new;
+  m_poll.watch_free = ola_watch_free;
+  m_poll.watch_update = NULL;
+  m_poll.watch_get_events = NULL;
+
+  m_poll.timeout_new = ola_timeout_new;
+  m_poll.timeout_free = ola_timeout_free;
+  m_poll.timeout_update = ola_timeout_update;
+};
+
+AvahiWatch* OlaPoll::WatchNew(
+    int fd,
+    AvahiWatchEvent event,
+    AvahiWatchCallback callback,
+    void *userdata) {
+
+}
+
+void OlaPoll::WatchFree(AvahiWatch *watch) {
+
+
+}
+
+void OlaPoll::WatchUpdate(AvahiWatch *watch, AvahiWatchEvent event) {
+
+}
+
+AvahiWatchEvent OlaPoll::WatchGetEvents(AvahiWatch *watch) {
+
+
+}
+
+AvahiTimeout* OlaPoll::TimeoutNew(
+    const struct timeval *tv,
+    AvahiTimeoutCallback callback,
+    void *userdata) {
+  AvahiTimeout *timeout = new AvahiTimeout();
+  timeout->poll = this;
+  timeout->callback = callback;
+  timeout->userdata = userdata;
+
+  TimeInterval delay(*tv);
+  timeout->id = m_ss->RegisterSingleTimeout(
+      delay, NewSingleCallback(ExecuteTimeout, timeout));
+  return timeout;
+}
+
+void OlaPoll::TimeoutFree(AvahiTimeout *timeout) {
+  if (timeout->id != ola::thread::INVALID_TIMEOUT) {
+    m_ss->RemoveTimeout(timeout->id);
+  }
+  delete timeout;
+}
+
+void OlaPoll::TimeoutUpdate(AvahiTimeout *timeout,
+                            const struct timeval *tv) {
+  if (timeout->id != ola::thread::INVALID_TIMEOUT) {
+    m_ss->RemoveTimeout(timeout->id);
+    timeout->id = ola::thread::INVALID_TIMEOUT;
+  }
+  if (!tv) {
+    return;
+  }
+
+  TimeInterval delay(*tv);
+  timeout->id = m_ss->RegisterSingleTimeout(
+      delay, NewSingleCallback(ExecuteTimeout, timeout));
+}
+
+
+/*
+  ::Run() {
+
+  OlaPoll ola_poll(&m_ss);
+  AvahiPoll* poll = ola_poll.GetPoll();
+
+  m_client = avahi_client_new(poll, ....);
+  m_ss.Run();
+*/
 
 // ControllerResolver
 // ----------------------------------------------------------------------------
@@ -328,7 +518,7 @@ AvahiE133DiscoveryAgent::~AvahiE133DiscoveryAgent() {
   Stop();
 }
 
-bool AvahiE133DiscoveryAgent::Init() {
+bool AvahiE133DiscoveryAgent::Start() {
   CreateNewClient();
 
   if (m_threaded_poll) {
@@ -369,31 +559,14 @@ bool AvahiE133DiscoveryAgent::Stop() {
   return true;
 }
 
-bool AvahiE133DiscoveryAgent::FindControllers(BrowseCallback *callback) {
-  if (!callback) {
-    return false;
-  }
+void AvahiE133DiscoveryAgent::SetScope(const std::string &scope) {
 
-  MutexLocker lock(&m_controllers_mu);
-  vector<E133ControllerInfo> controllers;
-
-  ControllerResolverList::iterator iter = m_controllers.begin();
-  for (; iter != m_controllers.end(); ++iter) {
-    E133ControllerInfo info;
-    if ((*iter)->GetControllerResolver(&info)) {
-      controllers.push_back(info);
-    }
-  }
-  callback->Run(controllers);
-  return true;
+  (void) scope;
 }
 
 void AvahiE133DiscoveryAgent::FindControllers(
-    vector<E133ControllerInfo> *controllers) {
-
+    ControllerEntryList *controllers) {
   MutexLocker lock(&m_controllers_mu);
-
-  (void) controllers;
 
   ControllerResolverList::iterator iter = m_controllers.begin();
   for (; iter != m_controllers.end(); ++iter) {
@@ -408,6 +581,12 @@ void AvahiE133DiscoveryAgent::RegisterController(
     const IPV4SocketAddress &controller) {
 
   (void) controller;
+}
+
+void AvahiE133DiscoveryAgent::DeRegisterController(
+      const ola::network::IPV4SocketAddress &controller_address) {
+
+
 }
 
 /*

@@ -47,15 +47,17 @@ class AvahiE133DiscoveryAgent : public E133DiscoveryAgentInterface {
   AvahiE133DiscoveryAgent();
   ~AvahiE133DiscoveryAgent();
 
-  bool Init();
+  bool Start();
 
   bool Stop();
 
-  bool FindControllers(BrowseCallback *callback);
+  void SetScope(const std::string &scope);
 
-  void FindControllers(std::vector<E133ControllerInfo> *controllers);
+  void FindControllers(ControllerEntryList *controllers);
 
-  void RegisterController(
+  void RegisterController(const E133ControllerEntry &controller);
+
+  void DeRegisterController(
       const ola::network::IPV4SocketAddress &controller_address);
 
   // Called from the static callback functions.
