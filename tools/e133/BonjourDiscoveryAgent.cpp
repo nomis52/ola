@@ -91,7 +91,7 @@ class ControllerResolver {
 
   DNSServiceErrorType StartResolution();
 
-  bool GetControllerResolver(E133ControllerEntry *controller_entry) const;
+  bool GetControllerEntry(E133ControllerEntry *controller_entry) const;
 
   void ResolveHandler(
       DNSServiceErrorType errorCode,
@@ -413,7 +413,7 @@ DNSServiceErrorType ControllerResolver::StartResolution() {
   return error;
 }
 
-bool ControllerResolver::GetControllerResolver(
+bool ControllerResolver::GetControllerEntry(
     E133ControllerEntry *controller_entry) const {
   if (m_resolved_address.Host().IsWildcard()) {
     return false;
@@ -781,7 +781,7 @@ void BonjourE133DiscoveryAgent::FindControllers(
   ControllerResolverList::iterator iter = m_controllers.begin();
   for (; iter != m_controllers.end(); ++iter) {
     E133ControllerEntry controller_entry;
-    if ((*iter)->GetControllerResolver(&controller_entry)) {
+    if ((*iter)->GetControllerEntry(&controller_entry)) {
       controllers->push_back(controller_entry);
     }
   }
