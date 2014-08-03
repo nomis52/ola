@@ -95,3 +95,22 @@ To perform scale testing you may need to increase the number of FDs per process
 * Implement a controller which finds all devices, then sends a TCP_CONNS_STATS2
   message to each, and check the response matches what we know from the
   controller mesh.
+
+# Troubleshooting
+
+## Bonjour
+
+To browse for controllers run:
+
+dns-sd  -B _rdmnet-ctrl._tcp
+
+If everything works fine from the local machine, but other machines can't
+discover the service, check for -NoMulticastAdvertisements in
+/System/Library/LaunchDaemons/com.apple.mDNSResponder.plist. See
+http://support.apple.com/kb/HT3789
+
+## Avahi
+
+To browse for controllers run:
+
+avahi-browse _rdmnet-ctrl._tcp
