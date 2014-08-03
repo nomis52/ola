@@ -96,8 +96,6 @@ class BonjourE133DiscoveryAgent : public E133DiscoveryAgentInterface {
   void InternalDeRegisterService(
       ola::network::IPV4SocketAddress controller_address);
 
-  static std::string BuildTxtRecord(const E133ControllerEntry &controller);
-
   DISALLOW_COPY_AND_ASSIGN(BonjourE133DiscoveryAgent);
 };
 #endif  // TOOLS_E133_BONJOURDISCOVERYAGENT_H_
