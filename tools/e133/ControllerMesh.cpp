@@ -113,14 +113,10 @@ ControllerMesh::~ControllerMesh() {
   for (; iter != m_known_controllers.end(); ++iter) {
     delete iter->connection;
   }
-
-  if (m_controllers_cb) {
-    delete m_controllers_cb;
-  }
 }
 
 bool ControllerMesh::Start() {
-  if (!m_controllers_cb) {
+  if (!m_controllers_cb.get()) {
     return false;
   }
 
@@ -315,7 +311,7 @@ void ControllerMesh::OnTCPConnect(TCPSocket *socket_ptr) {
 }
 
 void ControllerMesh::TCPConnectionClosed(const IPV4SocketAddress &peer_addr) {
-  if (m_disconnect_cb) {
+  if (m_disconnect_cb.get()) {
     m_disconnect_cb->Run(peer_addr);
   }
   m_tcp_connector.Disconnect(peer_addr);
@@ -410,7 +406,7 @@ void ControllerMesh::DeviceList(
     return;
   }
 
-  if (!m_add_device_callback) {
+  if (!m_add_device_callback.get()) {
     return;
   }
 

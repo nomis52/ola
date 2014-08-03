@@ -132,9 +132,9 @@ class ControllerMesh {
 
   typedef std::vector<ControllerInfo> ControllerList;
 
-  RefreshControllersCallback *m_controllers_cb;
-  AddDeviceCallback *m_add_device_callback;
-  ControllerDisconnectCallback *m_disconnect_cb;
+  std::auto_ptr<RefreshControllersCallback> m_controllers_cb;
+  std::auto_ptr<AddDeviceCallback> m_add_device_callback;
+  std::auto_ptr<ControllerDisconnectCallback> m_disconnect_cb;
   const uint16_t m_our_port;
   const unsigned int m_max_queue_size;
   ola::io::SelectServerInterface *m_ss;

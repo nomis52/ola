@@ -285,7 +285,7 @@ bool Gen2Controller::Start() {
   m_ss.RegisterRepeatingTimeout(
       TimeInterval(0, 500000),
       NewCallback(this, &Gen2Controller::PrintStats));
-    ShowHelp();
+  ShowHelp();
   m_ss.Run();
   m_ss.RemoveReadDescriptor(&m_listen_socket);
   return true;
