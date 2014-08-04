@@ -24,6 +24,17 @@
 #include <ola/network/SocketAddress.h>
 #include <ola/rdm/UID.h>
 #include <string>
+#include <iostream>
+
+std::string E133ControllerEntry::ServiceName() const {
+  if (!service_name.empty()) {
+    return service_name;
+  }
+
+  std::ostringstream str;
+  str << "OLA Controller " << address.Port();
+  return str.str();
+}
 
 std::string E133ControllerEntry::ToString() const {
   std::ostringstream out;

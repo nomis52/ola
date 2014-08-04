@@ -170,8 +170,6 @@ class ControllerRegistration {
   void CancelRegistration();
   bool UpdateRecord(const std::string &txt_data);
 
-  // TODO(simon): Depend on what the Avahi API is we may want to move this to a
-  // common function.
   std::string BuildTxtRecord(const E133ControllerEntry &controller);
 
   DISALLOW_COPY_AND_ASSIGN(ControllerRegistration);
@@ -592,16 +590,7 @@ bool ControllerRegistration::RegisterOrUpdate(
     CancelRegistration();
   }
 
-  string service_name;
-  if (controller.service_name.empty()) {
-    ostringstream str;
-    str << "OLA Controller " << controller.address.Port();
-    service_name = str.str();
-    str.str("");
-  } else {
-    service_name = controller.service_name;
-  }
-
+  const string service_name = controller.ServiceName();
   const string txt_data = BuildTxtRecord(controller);
 
   string service_type = GenerateE133SubType(controller.scope);

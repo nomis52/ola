@@ -84,16 +84,28 @@ class AvahiE133DiscoveryAgent : public E133DiscoveryAgentInterface {
 
  private:
   typedef std::vector<class ControllerResolver*> ControllerResolverList;
+  typedef std::map<ola::network::IPV4SocketAddress,
+                   class ControllerRegistration*> ControllerRegistrationList;
 
-  AvahiThreadedPoll *m_threaded_poll;
+  ola::io::SelectServer m_ss;
+  std::auto_ptr<ola::thread::CallbackThread> m_thread;
+
+  // Apart from initialization, these are all only access by the Avahi thread.
+  class AvahiOlaPoll *m_avahi_poll;
   AvahiClient *m_client;
+  AvahiClientState m_state;
   AvahiTimeout *m_reconnect_timeout;
   ola::BackoffGenerator m_backoff;
-
   AvahiServiceBrowser *m_controller_browser;
+  ControllerRegistrationList m_registrations;
 
+  // These are shared between the threads and are protected with
+  // m_controllers_mu
   ControllerResolverList m_controllers;
+  ControllerResolverList m_orphaned_controllers;
   ola::thread::Mutex m_controllers_mu;
+
+  void RunThread();
 
   void CreateNewClient();
   void SetUpReconnectTimeout();
@@ -111,8 +123,9 @@ class AvahiE133DiscoveryAgent : public E133DiscoveryAgentInterface {
                         const std::string &type,
                         const std::string &domain);
 
-  static std::string ClientStateToString(AvahiClientState state);
-  static std::string GroupStateToString(AvahiEntryGroupState state);
+  void InternalRegisterService(E133ControllerEntry controller_entry);
+  void InternalDeRegisterService(
+      ola::network::IPV4SocketAddress controller_address);
 
   DISALLOW_COPY_AND_ASSIGN(AvahiE133DiscoveryAgent);
 };

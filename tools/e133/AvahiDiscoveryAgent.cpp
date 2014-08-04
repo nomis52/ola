@@ -20,15 +20,17 @@
 
 #include "tools/e133/AvahiDiscoveryAgent.h"
 
-#include <avahi-common/error.h>
 #include <avahi-client/lookup.h>
+#include <avahi-client/publish.h>
+#include <avahi-common/error.h>
+#include <avahi-common/strlst.h>
 
 #include <netinet/in.h>
-#include <ola/base/Flags.h>
 #include <ola/Callback.h>
 #include <ola/Logging.h>
 #include <ola/network/NetworkUtils.h>
 #include <ola/stl/STLUtils.h>
+#include <ola/io/Descriptor.h>
 #include <stdint.h>
 
 #include <map>
@@ -36,207 +38,23 @@
 #include <vector>
 #include <utility>
 
+#include "tools/e133/AvahiHelper.h"
+#include "tools/e133/AvahiOlaPoll.h"
+
+using ola::io::SelectServerInterface;
+using ola::io::UnmanagedFileDescriptor;
 using ola::network::HostToNetwork;
-using ola::network::NetworkToHost;
 using ola::network::IPV4Address;
 using ola::network::IPV4SocketAddress;
-using ola::io::SelectServerInterface;
+using ola::network::NetworkToHost;
+using ola::NewCallback;
+using ola::NewSingleCallback;
 using ola::thread::MutexLocker;
 using ola::TimeInterval;
-using ola::NewSingleCallback;
 using std::auto_ptr;
+using std::ostringstream;
 using std::string;
 using std::vector;
-using std::ostringstream;
-
-class OlaPoll;
-
-// The Avahi data structures.
-struct AvahiWatch {
-  OlaPoll *poll;
-
-  AvahiWatchCallback callback;
-  void *userdata;
-};
-
-struct AvahiTimeout {
-  OlaPoll *poll;
-  ola::thread::timeout_id id;
-
-  AvahiTimeoutCallback callback;
-  void  *userdata;
-};
-
-
-// The Ola implementation of an AvahiPoll.
-//-----------------------------------------------------------------------------
-class OlaPoll {
- public:
-  explicit OlaPoll(SelectServerInterface *ss);
-
-  const AvahiPoll* GetPoll() const {
-    return &m_poll;
-  }
-
-  AvahiWatch* WatchNew(
-    int fd,
-    AvahiWatchEvent event,
-    AvahiWatchCallback callback,
-    void *userdata);
-  void WatchFree(AvahiWatch *watch);
-  void WatchUpdate(AvahiWatch *watch, AvahiWatchEvent event);
-  AvahiWatchEvent WatchGetEvents(AvahiWatch *watch);
-
-  AvahiTimeout* TimeoutNew(
-    const struct timeval *tv,
-    AvahiTimeoutCallback callback,
-    void *userdata);
-
-  void TimeoutFree(AvahiTimeout *timeout);
-
-  void TimeoutUpdate(AvahiTimeout *timeout,
-                     const struct timeval *tv);
-
- private:
-  SelectServerInterface *m_ss;
-  AvahiPoll m_poll;
-};
-
-// Static callbacks
-//-----------------------------------------------------------------------------
-static AvahiWatch* ola_watch_new(
-    const AvahiPoll *api,
-    int fd,
-    AvahiWatchEvent event,
-    AvahiWatchCallback callback,
-    void *userdata) {
-  OlaPoll *poll = reinterpret_cast<OlaPoll*>(api->userdata);
-  return poll->WatchNew(fd, event, callback, userdata);
-}
-
-static void ola_watch_new(AvahiWatch *watch) {
-  watch->poll->WatchFree(watch);
-}
-
-static void ola_watch_free(AvahiWatch *watch) {
-  watch->poll->WatchFree(watch);
-}
-
-static void watch_update(AvahiWatch *watch, AvahiWatchEvent event) {
-  watch->poll->WatchUpdate(watch, event);
-}
-
-static AvahiWatchEvent ola_watch_get_events(AvahiWatch *watch) {
-  return watch->poll->WatchGetEvents(watch);
-}
-
-static AvahiTimeout* ola_timeout_new(
-    const AvahiPoll *api,
-    const struct timeval *tv,
-    AvahiTimeoutCallback callback,
-    void *userdata) {
-  OlaPoll *poll = reinterpret_cast<OlaPoll*>(api->userdata);
-  return poll->TimeoutNew(tv, callback, userdata);
-}
-
-static void ola_timeout_free(AvahiTimeout *timeout) {
-  timeout->poll->TimeoutFree(timeout);
-}
-
-static void ola_timeout_update(AvahiTimeout *timeout,
-                               const struct timeval *tv) {
-  timeout->poll->TimeoutUpdate(timeout, tv);
-}
-
-void ExecuteTimeout(AvahiTimeout *timeout) {
-  timeout->id = ola::thread::INVALID_TIMEOUT;
-  timeout->callback(timeout, timeout->userdata);
-}
-
-// OlaPoll implementation
-//-----------------------------------------------------------------------------
-OlaPoll::OlaPoll(SelectServerInterface *ss)
-    : m_ss(ss) {
-  m_poll.userdata = this;
-  m_poll.watch_new = ola_watch_new;
-  m_poll.watch_free = ola_watch_free;
-  m_poll.watch_update = NULL;
-  m_poll.watch_get_events = NULL;
-
-  m_poll.timeout_new = ola_timeout_new;
-  m_poll.timeout_free = ola_timeout_free;
-  m_poll.timeout_update = ola_timeout_update;
-};
-
-AvahiWatch* OlaPoll::WatchNew(
-    int fd,
-    AvahiWatchEvent event,
-    AvahiWatchCallback callback,
-    void *userdata) {
-
-}
-
-void OlaPoll::WatchFree(AvahiWatch *watch) {
-
-
-}
-
-void OlaPoll::WatchUpdate(AvahiWatch *watch, AvahiWatchEvent event) {
-
-}
-
-AvahiWatchEvent OlaPoll::WatchGetEvents(AvahiWatch *watch) {
-
-
-}
-
-AvahiTimeout* OlaPoll::TimeoutNew(
-    const struct timeval *tv,
-    AvahiTimeoutCallback callback,
-    void *userdata) {
-  AvahiTimeout *timeout = new AvahiTimeout();
-  timeout->poll = this;
-  timeout->callback = callback;
-  timeout->userdata = userdata;
-
-  TimeInterval delay(*tv);
-  timeout->id = m_ss->RegisterSingleTimeout(
-      delay, NewSingleCallback(ExecuteTimeout, timeout));
-  return timeout;
-}
-
-void OlaPoll::TimeoutFree(AvahiTimeout *timeout) {
-  if (timeout->id != ola::thread::INVALID_TIMEOUT) {
-    m_ss->RemoveTimeout(timeout->id);
-  }
-  delete timeout;
-}
-
-void OlaPoll::TimeoutUpdate(AvahiTimeout *timeout,
-                            const struct timeval *tv) {
-  if (timeout->id != ola::thread::INVALID_TIMEOUT) {
-    m_ss->RemoveTimeout(timeout->id);
-    timeout->id = ola::thread::INVALID_TIMEOUT;
-  }
-  if (!tv) {
-    return;
-  }
-
-  TimeInterval delay(*tv);
-  timeout->id = m_ss->RegisterSingleTimeout(
-      delay, NewSingleCallback(ExecuteTimeout, timeout));
-}
-
-
-/*
-  ::Run() {
-
-  OlaPoll ola_poll(&m_ss);
-  AvahiPoll* poll = ola_poll.GetPoll();
-
-  m_client = avahi_client_new(poll, ....);
-  m_ss.Run();
-*/
 
 // ControllerResolver
 // ----------------------------------------------------------------------------
@@ -262,8 +80,7 @@ class ControllerResolver {
 
   // DNSServiceErrorType StartResolution();
 
-  bool GetControllerResolver(
-      E133DiscoveryAgentInterface::E133ControllerInfo *info);
+  bool GetControllerEntry(E133ControllerEntry *entry);
 
   /*
   void ResolveHandler(
@@ -287,11 +104,42 @@ class ControllerResolver {
   ola::network::IPV4SocketAddress m_resolved_address;
 
   static const uint8_t DEFAULT_PRIORITY;
-  static const char PRIORITY_KEY[];
 };
 
 const uint8_t ControllerResolver::DEFAULT_PRIORITY = 100;
-const char ControllerResolver::PRIORITY_KEY[] = "priority";
+
+// ControllerRegistration
+// ----------------------------------------------------------------------------
+class ControllerRegistration {
+ public:
+  explicit ControllerRegistration(AvahiClient *client, AvahiClientState state)
+      : m_client(client),
+        m_state(state),
+        m_entry_group(NULL) {
+  }
+
+  ~ControllerRegistration();
+
+  void ChangeState(AvahiClientState state);
+
+  void RegisterOrUpdate(const E133ControllerEntry &controller);
+
+  void GroupEvent(AvahiEntryGroupState state);
+
+ private:
+  AvahiClient *m_client;
+  AvahiClientState m_state;
+  E133ControllerEntry m_controller_entry;
+  AvahiEntryGroup *m_entry_group;
+
+  void PerformRegistration(const E133ControllerEntry &controller);
+  void UpdateRegistration(const E133ControllerEntry &controller);
+  void CancelRegistration();
+
+  AvahiStringList *BuildTxtRecord(const E133ControllerEntry &controller);
+
+  DISALLOW_COPY_AND_ASSIGN(ControllerRegistration);
+};
 
 // static callback functions
 // ----------------------------------------------------------------------------
@@ -316,27 +164,32 @@ static void reconnect_callback(AvahiTimeout*, void *data) {
   agent->ReconnectTimeout();
 }
 
-static void browse_callback(
-    AvahiServiceBrowser *b,
-    AvahiIfIndex interface,
-    AvahiProtocol protocol,
-    AvahiBrowserEvent event,
-    const char *name,
-    const char *type,
-    const char *domain,
-    AvahiLookupResultFlags flags,
-    void* data) {
-
+static void browse_callback(AvahiServiceBrowser *b,
+                            AvahiIfIndex interface,
+                            AvahiProtocol protocol,
+                            AvahiBrowserEvent event,
+                            const char *name,
+                            const char *type,
+                            const char *domain,
+                            AvahiLookupResultFlags flags,
+                            void* data) {
   AvahiE133DiscoveryAgent *agent =
       reinterpret_cast<AvahiE133DiscoveryAgent*>(data);
 
-  OLA_INFO << "In browse_callback: "
-           << AvahiE133DiscoveryAgent::BrowseEventToString(event);
+  OLA_INFO << "In browse_callback: " << BrowseEventToString(event);
   agent->BrowseEvent(interface, protocol, event, name, type, domain, flags);
 
   (void) b;
 }
 
+static void entry_group_callback(AvahiEntryGroup *group,
+                                 AvahiEntryGroupState state,
+                                 void *data) {
+  ControllerRegistration *controller_registration =
+      reinterpret_cast<ControllerRegistration*>(data);
+  controller_registration->GroupEvent(state);
+  (void) group;
+}
 }  // namespace
 
 // ControllerResolver
@@ -414,15 +267,14 @@ DNSServiceErrorType ControllerResolver::StartResolution() {
 }
 */
 
-bool ControllerResolver::GetControllerResolver(
-    E133DiscoveryAgentInterface::E133ControllerInfo *info) {
+bool ControllerResolver::GetControllerEntry(E133ControllerEntry *entry) {
   /*
   if (m_resolved_address.Host().IsWildcard()) {
     return false;
   }
 
   */
-  info->priority = m_priority;
+  entry->priority = m_priority;
   // info->address = m_resolved_address;
   return true;
 }
@@ -503,11 +355,161 @@ void ControllerResolver::UpdateAddress(const IPV4Address &v4_address) {
 }
 */
 
+// ControllerRegistration
+// ----------------------------------------------------------------------------
+
+ControllerRegistration::~ControllerRegistration() {
+  CancelRegistration();
+}
+
+void ControllerRegistration::ChangeState(AvahiClientState state) {
+  if (state == AVAHI_CLIENT_S_RUNNING && state != m_state) {
+    m_state = state;
+    PerformRegistration(m_controller_entry);
+  } else {
+    CancelRegistration();
+    m_state = state;
+  }
+}
+
+void ControllerRegistration::RegisterOrUpdate(
+    const E133ControllerEntry &controller) {
+  if (m_controller_entry == controller) {
+    // No change.
+    return;
+  }
+
+  if (m_state != AVAHI_CLIENT_S_RUNNING) {
+    // Store the controller info until we change to running.
+    m_controller_entry = controller;
+    return;
+  }
+
+  if (m_entry_group) {
+    OLA_INFO << "Updating controller registration for " << controller.address;
+    UpdateRegistration(controller);
+  } else {
+    PerformRegistration(controller);
+  }
+  m_controller_entry = controller;
+}
+
+void ControllerRegistration::GroupEvent(AvahiEntryGroupState state) {
+  OLA_INFO << "Group state changed to " << GroupStateToString(state);
+}
+
+void ControllerRegistration::PerformRegistration(
+    const E133ControllerEntry &controller) {
+  if (m_entry_group) {
+    OLA_WARN << "Already got an AvahiEntryGroup!";
+  }
+
+  m_entry_group = avahi_entry_group_new(m_client, entry_group_callback, this);
+  if (!m_entry_group) {
+    OLA_WARN << "avahi_entry_group_new() failed: "
+             << avahi_strerror(avahi_client_errno(m_client));
+    return;
+  }
+
+  AvahiStringList *txt_str_list = BuildTxtRecord(controller);;
+
+  // Change to  avahi_entry_group_add_service_strlst
+  int ret = avahi_entry_group_add_service_strlst(
+      m_entry_group, AVAHI_IF_UNSPEC, AVAHI_PROTO_UNSPEC,
+      static_cast<AvahiPublishFlags>(0),
+      controller.ServiceName().c_str(),
+      E133DiscoveryAgentInterface::E133_CONTROLLER_SERVICE,
+      NULL, NULL, controller.address.Port(), txt_str_list);
+
+  avahi_string_list_free(txt_str_list);
+
+  if (ret < 0) {
+    OLA_WARN << "Failed to add " << controller << " : " << avahi_strerror(ret);
+
+    if (ret == AVAHI_ERR_COLLISION) {
+      OLA_WARN << "AVAHI_ERR_COLLISION";
+    }
+    return;
+  }
+
+  // Add subtypes here
+
+  ret = avahi_entry_group_commit(m_entry_group);
+  if (ret < 0) {
+    OLA_WARN << "Failed to commit controller " << controller << " : "
+             << avahi_strerror(ret);
+  }
+}
+
+void ControllerRegistration::UpdateRegistration(
+    const E133ControllerEntry &controller) {
+  // Check for scope change?
+
+  // TODO(simon): implement me
+  (void) controller;
+}
+
+void ControllerRegistration::CancelRegistration() {
+  if (!m_entry_group) {
+    return;
+  }
+  avahi_entry_group_free(m_entry_group);
+  m_entry_group = NULL;
+}
+
+AvahiStringList *ControllerRegistration::BuildTxtRecord(
+    const E133ControllerEntry &controller) {
+  AvahiStringList *txt_str_list = NULL;
+  txt_str_list = avahi_string_list_add_printf(
+      txt_str_list, "%s=%d",
+      E133DiscoveryAgentInterface::TXT_VERSION_KEY,
+      E133DiscoveryAgentInterface::TXT_VERSION);
+
+  txt_str_list = avahi_string_list_add_printf(
+      txt_str_list, "%s=%d",
+      E133DiscoveryAgentInterface::PRIORITY_KEY,
+      controller.priority);
+
+  txt_str_list = avahi_string_list_add_printf(
+      txt_str_list, "%s=%s",
+      E133DiscoveryAgentInterface::SCOPE_KEY,
+      controller.scope.c_str());
+
+  txt_str_list = avahi_string_list_add_printf(
+      txt_str_list, "%s=%d",
+      E133DiscoveryAgentInterface::E133_VERSION_KEY,
+      controller.e133_version);
+
+  if (controller.uid.ManufacturerId() != 0 && controller.uid.DeviceId() != 0) {
+    txt_str_list = avahi_string_list_add_printf(
+        txt_str_list, "%s=%s",
+        E133DiscoveryAgentInterface::UID_KEY,
+        controller.uid.ToString().c_str());
+  }
+
+  if (!controller.model.empty()) {
+    txt_str_list = avahi_string_list_add_printf(
+        txt_str_list, "%s=%s",
+        E133DiscoveryAgentInterface::MODEL_KEY,
+        controller.model.c_str());
+  }
+
+  if (!controller.manufacturer.empty()) {
+    txt_str_list = avahi_string_list_add_printf(
+        txt_str_list, "%s=%s",
+        E133DiscoveryAgentInterface::MANUFACTURER_KEY,
+        controller.manufacturer.c_str());
+  }
+
+  return txt_str_list;
+}
+
 // AvahiE133DiscoveryAgent
 // ----------------------------------------------------------------------------
 AvahiE133DiscoveryAgent::AvahiE133DiscoveryAgent()
-    : m_threaded_poll(avahi_threaded_poll_new()),
+    : m_avahi_poll(NULL),
       m_client(NULL),
+      m_state(AVAHI_CLIENT_CONNECTING),
       m_reconnect_timeout(NULL),
       m_backoff(new ola::ExponentialBackoffPolicy(TimeInterval(1, 0),
                                                   TimeInterval(60, 0))),
@@ -519,34 +521,20 @@ AvahiE133DiscoveryAgent::~AvahiE133DiscoveryAgent() {
 }
 
 bool AvahiE133DiscoveryAgent::Start() {
-  CreateNewClient();
-
-  if (m_threaded_poll) {
-    avahi_threaded_poll_start(m_threaded_poll);
-    return true;
-  } else {
-    return false;
-  }
+  m_thread.reset(new ola::thread::CallbackThread(ola::NewSingleCallback(
+      this, &AvahiE133DiscoveryAgent::RunThread)));
+  m_thread->Start();
+  return true;
 }
 
 bool AvahiE133DiscoveryAgent::Stop() {
-  if (m_threaded_poll) {
-    avahi_threaded_poll_stop(m_threaded_poll);
+  if (m_thread.get() && m_thread->IsRunning()) {
+    m_ss.Terminate();
+    m_thread->Join();
+    m_thread.reset();
   }
 
-  if (m_controller_browser) {
-    avahi_service_browser_free(m_controller_browser);
-  }
-
-  if (m_client) {
-    avahi_client_free(m_client);
-    m_client = NULL;
-  }
-
-  if (m_threaded_poll) {
-    avahi_threaded_poll_free(m_threaded_poll);
-    m_threaded_poll = NULL;
-  }
+  return true;
 
   /*
   if (m_registration_ref) {
@@ -570,23 +558,51 @@ void AvahiE133DiscoveryAgent::FindControllers(
 
   ControllerResolverList::iterator iter = m_controllers.begin();
   for (; iter != m_controllers.end(); ++iter) {
-    E133ControllerInfo info;
-    if ((*iter)->GetControllerResolver(&info)) {
-      controllers->push_back(info);
+    E133ControllerEntry entry;
+    if ((*iter)->GetControllerEntry(&entry)) {
+      controllers->push_back(entry);
     }
   }
 }
 
 void AvahiE133DiscoveryAgent::RegisterController(
-    const IPV4SocketAddress &controller) {
-
-  (void) controller;
+    const E133ControllerEntry &controller) {
+  m_ss.Execute(ola::NewSingleCallback(
+      this,
+      &AvahiE133DiscoveryAgent::InternalRegisterService, controller));
 }
 
 void AvahiE133DiscoveryAgent::DeRegisterController(
       const ola::network::IPV4SocketAddress &controller_address) {
+  m_ss.Execute(ola::NewSingleCallback(
+      this, &AvahiE133DiscoveryAgent::InternalDeRegisterService,
+      controller_address));
+}
 
+void AvahiE133DiscoveryAgent::RunThread() {
+  m_avahi_poll = new AvahiOlaPoll(&m_ss);
 
+  CreateNewClient();
+  m_ss.Run();
+
+  if (m_controller_browser) {
+    avahi_service_browser_free(m_controller_browser);
+  }
+
+  if (m_client) {
+    avahi_client_free(m_client);
+    m_client = NULL;
+  }
+
+  delete m_avahi_poll;
+  m_avahi_poll = NULL;
+
+  /*
+  {
+    MutexLocker lock(&m_controllers_mu);
+    StopResolution();
+  }
+  */
 }
 
 /*
@@ -601,7 +617,13 @@ void AvahiE133DiscoveryAgent::ClientStateChanged(AvahiClientState state,
     m_client = client;
   }
 
+  m_state = state;
   OLA_INFO << "Avahi client state changed to " << ClientStateToString(state);
+
+  ControllerRegistrationList::iterator iter = m_registrations.begin();
+  for (; iter != m_registrations.end(); ++iter) {
+    iter->second->ChangeState(state);
+  }
 
   switch (state) {
     case AVAHI_CLIENT_S_RUNNING:
@@ -682,32 +704,6 @@ void AvahiE133DiscoveryAgent::BrowseEvent(AvahiIfIndex interface,
 }
 
 /*
-void AvahiE133DiscoveryAgent::RunThread() {
-  OLA_INFO << "Starting Discovery thread";
-
-  DNSServiceErrorType error = DNSServiceBrowse(
-      &m_discovery_service_ref,
-      0,
-      kDNSServiceInterfaceIndexAny,
-      E133_CONTROLLER_SERVICE,
-      NULL,  // domain
-      &BrowseServiceCallback,
-      reinterpret_cast<void*>(this));
-
-  if (error != kDNSServiceErr_NoError) {
-    OLA_WARN << "DNSServiceBrowse returned " << error;
-    // f->Set(false);
-    return;
-  }
-
-  // f->Set(true);
-  m_io_adapter->AddDescriptor(m_discovery_service_ref);
-  m_ss.Run();
-
-  m_io_adapter->RemoveDescriptor(m_discovery_service_ref);
-  DNSServiceRefDeallocate(m_discovery_service_ref);
-  OLA_INFO << "Done with discovery thread";
-}
 
 void AvahiE133DiscoveryAgent::BrowseResult(DNSServiceFlags flags,
                                            uint32_t interface_index,
@@ -790,12 +786,12 @@ void AvahiE133DiscoveryAgent::CreateNewClient() {
     return;
   }
 
-  if (m_threaded_poll) {
+  if (m_avahi_poll) {
     int error;
     // In the successful case, m_client is set in the ClientStateChanged method
-    m_client = avahi_client_new(avahi_threaded_poll_get(m_threaded_poll),
-                                AVAHI_CLIENT_NO_FAIL, client_callback, this,
-                                &error);
+    avahi_client_new(m_avahi_poll->GetPoll(),
+                     AVAHI_CLIENT_NO_FAIL, client_callback, this,
+                     &error);
     if (m_client) {
       m_backoff.Reset();
     } else {
@@ -815,15 +811,12 @@ void AvahiE133DiscoveryAgent::SetUpReconnectTimeout() {
   struct timeval tv;
   delay.AsTimeval(&tv);
 
-  const AvahiPoll *poll = avahi_threaded_poll_get(m_threaded_poll);
+  const AvahiPoll *poll = m_avahi_poll->GetPoll();
   if (m_reconnect_timeout) {
     poll->timeout_update(m_reconnect_timeout, &tv);
   } else {
     m_reconnect_timeout = poll->timeout_new(
-        avahi_threaded_poll_get(m_threaded_poll),
-        &tv,
-        reconnect_callback,
-        this);
+        poll, &tv, reconnect_callback, this);
   }
 }
 
@@ -886,53 +879,20 @@ void AvahiE133DiscoveryAgent::RemoveController(AvahiIfIndex interface,
   (void) protocol;
 }
 
-string AvahiE133DiscoveryAgent::ClientStateToString(AvahiClientState state) {
-  switch (state) {
-    case AVAHI_CLIENT_S_REGISTERING:
-      return "AVAHI_CLIENT_S_REGISTERING";
-    case AVAHI_CLIENT_S_RUNNING:
-      return "AVAHI_CLIENT_S_RUNNING";
-    case AVAHI_CLIENT_S_COLLISION:
-      return "AVAHI_CLIENT_S_COLLISION";
-    case AVAHI_CLIENT_FAILURE:
-      return "AVAHI_CLIENT_FAILURE";
-    case AVAHI_CLIENT_CONNECTING:
-      return "AVAHI_CLIENT_CONNECTING";
-    default:
-      return "Unknown state";
+void AvahiE133DiscoveryAgent::InternalRegisterService(
+    E133ControllerEntry controller) {
+  std::pair<ControllerRegistrationList::iterator, bool> p =
+      m_registrations.insert(
+          ControllerRegistrationList::value_type(controller.address, NULL));
+
+  if (p.first->second == NULL) {
+    p.first->second = new ControllerRegistration(m_client, m_state);
   }
+  ControllerRegistration *registration = p.first->second;
+  registration->RegisterOrUpdate(controller);
 }
 
-string AvahiE133DiscoveryAgent::GroupStateToString(AvahiEntryGroupState state) {
-  switch (state) {
-    case AVAHI_ENTRY_GROUP_UNCOMMITED:
-      return "AVAHI_ENTRY_GROUP_UNCOMMITED";
-    case AVAHI_ENTRY_GROUP_REGISTERING:
-      return "AVAHI_ENTRY_GROUP_REGISTERING";
-    case AVAHI_ENTRY_GROUP_ESTABLISHED:
-      return "AVAHI_ENTRY_GROUP_ESTABLISHED";
-    case AVAHI_ENTRY_GROUP_COLLISION:
-      return "AVAHI_ENTRY_GROUP_COLLISION";
-    case AVAHI_ENTRY_GROUP_FAILURE:
-      return "AVAHI_ENTRY_GROUP_FAILURE";
-    default:
-      return "Unknown state";
-  }
-}
-
-string AvahiE133DiscoveryAgent::BrowseEventToString(AvahiBrowserEvent state) {
-  switch (state) {
-    case AVAHI_BROWSER_NEW:
-      return "AVAHI_BROWSER_NEW";
-    case AVAHI_BROWSER_REMOVE:
-      return "AVAHI_BROWSER_REMOVE";
-    case AVAHI_BROWSER_CACHE_EXHAUSTED:
-      return "AVAHI_BROWSER_CACHE_EXHAUSTED";
-    case AVAHI_BROWSER_ALL_FOR_NOW:
-      return "AVAHI_BROWSER_ALL_FOR_NOW";
-    case AVAHI_BROWSER_FAILURE:
-      return "AVAHI_BROWSER_FAILURE";
-    default:
-      return "Unknown event";
-  }
+void AvahiE133DiscoveryAgent::InternalDeRegisterService(
+      ola::network::IPV4SocketAddress controller_address) {
+  ola::STLRemoveAndDelete(&m_registrations, controller_address);
 }

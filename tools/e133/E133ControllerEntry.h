@@ -64,7 +64,18 @@ struct E133ControllerEntry {
         manufacturer("Open Lighting") {
   }
 
-  static const uint8_t E133_VERSION = 1;
+  bool operator==(const E133ControllerEntry &other) {
+    return (service_name == other.service_name &&
+            address == other.address &&
+            priority == other.priority &&
+            uid == other.uid &&
+            scope == other.scope &&
+            e133_version == other.e133_version &&
+            model == other.model &&
+            manufacturer == other.manufacturer);
+  }
+
+  std::string ServiceName() const;
 
   std::string ToString() const;
 
@@ -72,6 +83,8 @@ struct E133ControllerEntry {
                                   const E133ControllerEntry &entry) {
     return out << entry.ToString();
   }
+
+  static const uint8_t E133_VERSION = 1;
 };
 
 
