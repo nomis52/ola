@@ -110,25 +110,24 @@ const uint8_t ControllerResolver::DEFAULT_PRIORITY = 100;
 
 // ControllerRegistration
 // ----------------------------------------------------------------------------
-class ControllerRegistration {
+class ControllerRegistration : public ClientStateChangeListener {
  public:
-  explicit ControllerRegistration(AvahiClient *client, AvahiClientState state)
+  explicit ControllerRegistration(AvahiOlaClient *client);
       : m_client(client),
-        m_state(state),
         m_entry_group(NULL) {
+    m_client->AddStateChangeListener(this);
   }
 
   ~ControllerRegistration();
 
-  void ChangeState(AvahiClientState state);
+  void ClientStateChanged(AvahiClientState state);
 
   void RegisterOrUpdate(const E133ControllerEntry &controller);
 
   void GroupEvent(AvahiEntryGroupState state);
 
  private:
-  AvahiClient *m_client;
-  AvahiClientState m_state;
+  AvahiOlaClient *m_client;
   E133ControllerEntry m_controller_entry;
   AvahiEntryGroup *m_entry_group;
 
@@ -145,24 +144,6 @@ class ControllerRegistration {
 // ----------------------------------------------------------------------------
 
 namespace {
-
-/*
- * Called when the client state changes. This is called once from
- * the thread that calls avahi_client_new, and then from the poll thread.
- */
-static void client_callback(AvahiClient *client,
-                            AvahiClientState state,
-                            void *data) {
-  AvahiE133DiscoveryAgent *agent =
-      reinterpret_cast<AvahiE133DiscoveryAgent*>(data);
-  agent->ClientStateChanged(state, client);
-}
-
-static void reconnect_callback(AvahiTimeout*, void *data) {
-  AvahiE133DiscoveryAgent *agent =
-      reinterpret_cast<AvahiE133DiscoveryAgent*>(data);
-  agent->ReconnectTimeout();
-}
 
 static void browse_callback(AvahiServiceBrowser *b,
                             AvahiIfIndex interface,
@@ -357,18 +338,24 @@ void ControllerResolver::UpdateAddress(const IPV4Address &v4_address) {
 
 // ControllerRegistration
 // ----------------------------------------------------------------------------
+ControllerRegistration::ControllerRegistration(AvahiOlaClient *client);
+    : m_client(client),
+      m_entry_group(NULL) {
+  m_client->AddStateChangeListener(this);
+}
 
 ControllerRegistration::~ControllerRegistration() {
   CancelRegistration();
+  m_client->RemoveStateChangeListener(this);
 }
 
-void ControllerRegistration::ChangeState(AvahiClientState state) {
-  if (state == AVAHI_CLIENT_S_RUNNING && state != m_state) {
-    m_state = state;
-    PerformRegistration(m_controller_entry);
-  } else {
-    CancelRegistration();
-    m_state = state;
+void ControllerRegistration::ClientStateChanged(AvahiClientState state) {
+  switch (m_client->GetState()) {
+    case AVAHI_CLIENT_S_RUNNING:
+      PerformRegistration(m_controller_entry);
+      break;
+    default:
+      CancelRegistration();
   }
 }
 
@@ -379,7 +366,7 @@ void ControllerRegistration::RegisterOrUpdate(
     return;
   }
 
-  if (m_state != AVAHI_CLIENT_S_RUNNING) {
+  if (m_client->GetState() != AVAHI_CLIENT_S_RUNNING) {
     // Store the controller info until we change to running.
     m_controller_entry = controller;
     return;
@@ -404,10 +391,9 @@ void ControllerRegistration::PerformRegistration(
     OLA_WARN << "Already got an AvahiEntryGroup!";
   }
 
-  m_entry_group = avahi_entry_group_new(m_client, entry_group_callback, this);
+  m_entry_group = m_client->CreateEntryGroup(entry_group_callback, this);
   if (!m_entry_group) {
-    OLA_WARN << "avahi_entry_group_new() failed: "
-             << avahi_strerror(avahi_client_errno(m_client));
+    OLA_WARN << "avahi_entry_group_new() failed: " << m_client->GetLastError();
     return;
   }
 
@@ -507,13 +493,7 @@ AvahiStringList *ControllerRegistration::BuildTxtRecord(
 // AvahiE133DiscoveryAgent
 // ----------------------------------------------------------------------------
 AvahiE133DiscoveryAgent::AvahiE133DiscoveryAgent()
-    : m_avahi_poll(NULL),
-      m_client(NULL),
-      m_state(AVAHI_CLIENT_CONNECTING),
-      m_reconnect_timeout(NULL),
-      m_backoff(new ola::ExponentialBackoffPolicy(TimeInterval(1, 0),
-                                                  TimeInterval(60, 0))),
-      m_controller_browser(NULL) {
+    : m_controller_browser(NULL) {
 }
 
 AvahiE133DiscoveryAgent::~AvahiE133DiscoveryAgent() {
@@ -579,23 +559,35 @@ void AvahiE133DiscoveryAgent::DeRegisterController(
       controller_address));
 }
 
-void AvahiE133DiscoveryAgent::RunThread() {
-  m_avahi_poll = new AvahiOlaPoll(&m_ss);
+void AvahiE133DiscoveryAgent::ClientStateChanged(AvahiClientState state) {
+  switch (state) {
+    case AVAHI_CLIENT_S_RUNNING:
+      // The server has started successfully and registered its host
+      // name on the network, so we can start locating the controllers.
+      LocateControllerServices();
+      break;
+    default:
+      // MutexLocker lock(&m_controllers_mu);
+      // StopResolution();
+      {}
+  }
+}
 
-  CreateNewClient();
+void AvahiE133DiscoveryAgent::RunThread() {
+  m_avahi_poll.reset(new AvahiOlaPoll(&m_ss));
+  m_client.reset(new AvahiClient(m_avahi_poll));
+  m_client->Start();
+
   m_ss.Run();
 
   if (m_controller_browser) {
     avahi_service_browser_free(m_controller_browser);
   }
 
-  if (m_client) {
-    avahi_client_free(m_client);
-    m_client = NULL;
-  }
+  m_client->Stop();
+  m_client.reset();
 
-  delete m_avahi_poll;
-  m_avahi_poll = NULL;
+  m_avahi_poll.reset();
 
   /*
   {
@@ -603,71 +595,6 @@ void AvahiE133DiscoveryAgent::RunThread() {
     StopResolution();
   }
   */
-}
-
-/*
- * This is a bit tricky because it can be called from either the main thread on
- * startup or from the poll thread.
- */
-void AvahiE133DiscoveryAgent::ClientStateChanged(AvahiClientState state,
-                                                 AvahiClient *client) {
-  // The first time this is called is from the avahi_client_new context. In
-  // that case m_client is still null so we set it here.
-  if (!m_client) {
-    m_client = client;
-  }
-
-  m_state = state;
-  OLA_INFO << "Avahi client state changed to " << ClientStateToString(state);
-
-  ControllerRegistrationList::iterator iter = m_registrations.begin();
-  for (; iter != m_registrations.end(); ++iter) {
-    iter->second->ChangeState(state);
-  }
-
-  switch (state) {
-    case AVAHI_CLIENT_S_RUNNING:
-      // The server has startup successfully and registered its host
-      // name on the network, so it's time to create our services.
-      // register_stuff
-
-      LocateControllerServices();
-
-      // UpdateServices();
-      break;
-    case AVAHI_CLIENT_FAILURE:
-      // DeregisterAllServices();
-
-      SetUpReconnectTimeout();
-      break;
-    case AVAHI_CLIENT_S_COLLISION:
-      // There was a hostname collision on the network.
-      // Let's drop our registered services. When the server is back
-      // in AVAHI_SERVER_RUNNING state we will register them again with the
-      // new host name.
-
-      // DeregisterAllServices();
-
-      break;
-    case AVAHI_CLIENT_S_REGISTERING:
-      // The server records are now being established. This
-      // might be caused by a host name change. We need to wait
-      // for our own records to register until the host name is
-      // properly established.
-
-      // DeregisterAllServices();
-      break;
-    case AVAHI_CLIENT_CONNECTING:
-      break;
-  }
-}
-
-void AvahiE133DiscoveryAgent::ReconnectTimeout() {
-  if (m_client) {
-    avahi_client_free(m_client);
-    m_client = NULL;
-  }
-  CreateNewClient();
 }
 
 void AvahiE133DiscoveryAgent::BrowseEvent(AvahiIfIndex interface,
@@ -780,54 +707,14 @@ void AvahiE133DiscoveryAgent::InternalRegisterService(
 */
 
 
-void AvahiE133DiscoveryAgent::CreateNewClient() {
-  if (m_client) {
-    OLA_WARN << "CreateNewClient called but m_client is not NULL";
-    return;
-  }
-
-  if (m_avahi_poll) {
-    int error;
-    // In the successful case, m_client is set in the ClientStateChanged method
-    avahi_client_new(m_avahi_poll->GetPoll(),
-                     AVAHI_CLIENT_NO_FAIL, client_callback, this,
-                     &error);
-    if (m_client) {
-      m_backoff.Reset();
-    } else {
-      OLA_WARN << "Failed to create Avahi client " << avahi_strerror(error);
-      SetUpReconnectTimeout();
-    }
-  }
-}
-
-void AvahiE133DiscoveryAgent::SetUpReconnectTimeout() {
-  // We don't strictly need an ExponentialBackoffPolicy here because the client
-  // goes into the AVAHI_CLIENT_CONNECTING state if the server isn't running.
-  // Still, it's a useful defense against spinning rapidly if something goes
-  // wrong.
-  TimeInterval delay = m_backoff.Next();
-  OLA_INFO << "Re-creating avahi client in " << delay << "s";
-  struct timeval tv;
-  delay.AsTimeval(&tv);
-
-  const AvahiPoll *poll = m_avahi_poll->GetPoll();
-  if (m_reconnect_timeout) {
-    poll->timeout_update(m_reconnect_timeout, &tv);
-  } else {
-    m_reconnect_timeout = poll->timeout_new(
-        poll, &tv, reconnect_callback, this);
-  }
-}
-
 void AvahiE133DiscoveryAgent::LocateControllerServices() {
-  m_controller_browser = avahi_service_browser_new(
-      m_client, AVAHI_IF_UNSPEC, AVAHI_PROTO_UNSPEC,
+  m_controller_browser = m_client->CreateServiceBrowser(
+      AVAHI_IF_UNSPEC, AVAHI_PROTO_UNSPEC,
       E133_CONTROLLER_SERVICE, NULL,
       static_cast<AvahiLookupFlags>(0), browse_callback, this);
   if (!m_controller_browser) {
     OLA_WARN << "Failed to start browsing for " << E133_CONTROLLER_SERVICE
-             << ": " << avahi_strerror(avahi_client_errno(m_client));
+             << ": " << m_client->GetLastError();
   }
 }
 
@@ -886,7 +773,7 @@ void AvahiE133DiscoveryAgent::InternalRegisterService(
           ControllerRegistrationList::value_type(controller.address, NULL));
 
   if (p.first->second == NULL) {
-    p.first->second = new ControllerRegistration(m_client, m_state);
+    p.first->second = new ControllerRegistration(m_client.get());
   }
   ControllerRegistration *registration = p.first->second;
   registration->RegisterOrUpdate(controller);

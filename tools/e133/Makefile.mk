@@ -64,6 +64,8 @@ endif
 
 if HAVE_AVAHI
 tools_e133_libolae133common_la_SOURCES += \
+    tools/e133/AvahiOlaClient.cpp \
+    tools/e133/AvahiOlaClient.h \
     tools/e133/AvahiDiscoveryAgent.cpp \
     tools/e133/AvahiDiscoveryAgent.h \
     tools/e133/AvahiHelper.cpp \

@@ -38,11 +38,13 @@
 #include <vector>
 
 #include "tools/e133/E133DiscoveryAgent.h"
+#include "tools/e133/AvahiClient.h"
 
 /**
  * @brief An implementation of E133DiscoveryAgentInterface that uses the Avahi.
  */
-class AvahiE133DiscoveryAgent : public E133DiscoveryAgentInterface {
+class AvahiE133DiscoveryAgent : public E133DiscoveryAgentInterface,
+                                       ClientStateChangeListener {
  public:
   AvahiE133DiscoveryAgent();
   ~AvahiE133DiscoveryAgent();
@@ -60,17 +62,9 @@ class AvahiE133DiscoveryAgent : public E133DiscoveryAgentInterface {
   void DeRegisterController(
       const ola::network::IPV4SocketAddress &controller_address);
 
-  // Called from the static callback functions.
+  // Called from various callbacks
 
-  /**
-   * @brief Called when the Avahi client state changes
-   */
-  void ClientStateChanged(AvahiClientState state, AvahiClient *client);
-
-  /**
-   * @brief Called when the reconnect timeout expires.
-   */
-  void ReconnectTimeout();
+  void ClientStateChanged(AvahiClientState state);
 
   void BrowseEvent(AvahiIfIndex interface,
                    AvahiProtocol protocol,
@@ -91,11 +85,8 @@ class AvahiE133DiscoveryAgent : public E133DiscoveryAgentInterface {
   std::auto_ptr<ola::thread::CallbackThread> m_thread;
 
   // Apart from initialization, these are all only access by the Avahi thread.
-  class AvahiOlaPoll *m_avahi_poll;
-  AvahiClient *m_client;
-  AvahiClientState m_state;
-  AvahiTimeout *m_reconnect_timeout;
-  ola::BackoffGenerator m_backoff;
+  std::auto_ptr<class AvahiOlaPoll> *m_avahi_poll;
+  std::auto_ptr<AvahiClient> m_client;
   AvahiServiceBrowser *m_controller_browser;
   ControllerRegistrationList m_registrations;
 
@@ -106,9 +97,6 @@ class AvahiE133DiscoveryAgent : public E133DiscoveryAgentInterface {
   ola::thread::Mutex m_controllers_mu;
 
   void RunThread();
-
-  void CreateNewClient();
-  void SetUpReconnectTimeout();
 
   void LocateControllerServices();
   void AddController(AvahiIfIndex interface,
