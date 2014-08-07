@@ -34,6 +34,7 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 #include <utility>
@@ -113,11 +114,6 @@ const uint8_t ControllerResolver::DEFAULT_PRIORITY = 100;
 class ControllerRegistration : public ClientStateChangeListener {
  public:
   explicit ControllerRegistration(AvahiOlaClient *client);
-      : m_client(client),
-        m_entry_group(NULL) {
-    m_client->AddStateChangeListener(this);
-  }
-
   ~ControllerRegistration();
 
   void ClientStateChanged(AvahiClientState state);
@@ -338,7 +334,7 @@ void ControllerResolver::UpdateAddress(const IPV4Address &v4_address) {
 
 // ControllerRegistration
 // ----------------------------------------------------------------------------
-ControllerRegistration::ControllerRegistration(AvahiOlaClient *client);
+ControllerRegistration::ControllerRegistration(AvahiOlaClient *client)
     : m_client(client),
       m_entry_group(NULL) {
   m_client->AddStateChangeListener(this);
@@ -350,7 +346,7 @@ ControllerRegistration::~ControllerRegistration() {
 }
 
 void ControllerRegistration::ClientStateChanged(AvahiClientState state) {
-  switch (m_client->GetState()) {
+  switch (state) {
     case AVAHI_CLIENT_S_RUNNING:
       PerformRegistration(m_controller_entry);
       break;
@@ -397,7 +393,7 @@ void ControllerRegistration::PerformRegistration(
     return;
   }
 
-  AvahiStringList *txt_str_list = BuildTxtRecord(controller);;
+  AvahiStringList *txt_str_list = BuildTxtRecord(controller);
 
   // Change to  avahi_entry_group_add_service_strlst
   int ret = avahi_entry_group_add_service_strlst(
@@ -528,7 +524,6 @@ bool AvahiE133DiscoveryAgent::Stop() {
 }
 
 void AvahiE133DiscoveryAgent::SetScope(const std::string &scope) {
-
   (void) scope;
 }
 
@@ -575,7 +570,7 @@ void AvahiE133DiscoveryAgent::ClientStateChanged(AvahiClientState state) {
 
 void AvahiE133DiscoveryAgent::RunThread() {
   m_avahi_poll.reset(new AvahiOlaPoll(&m_ss));
-  m_client.reset(new AvahiClient(m_avahi_poll));
+  m_client.reset(new AvahiOlaClient(m_avahi_poll.get()));
   m_client->Start();
 
   m_ss.Run();

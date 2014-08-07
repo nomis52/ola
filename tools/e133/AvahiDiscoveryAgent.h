@@ -38,7 +38,7 @@
 #include <vector>
 
 #include "tools/e133/E133DiscoveryAgent.h"
-#include "tools/e133/AvahiClient.h"
+#include "tools/e133/AvahiOlaClient.h"
 
 /**
  * @brief An implementation of E133DiscoveryAgentInterface that uses the Avahi.
@@ -85,8 +85,8 @@ class AvahiE133DiscoveryAgent : public E133DiscoveryAgentInterface,
   std::auto_ptr<ola::thread::CallbackThread> m_thread;
 
   // Apart from initialization, these are all only access by the Avahi thread.
-  std::auto_ptr<class AvahiOlaPoll> *m_avahi_poll;
-  std::auto_ptr<AvahiClient> m_client;
+  std::auto_ptr<class AvahiOlaPoll> m_avahi_poll;
+  std::auto_ptr<AvahiOlaClient> m_client;
   AvahiServiceBrowser *m_controller_browser;
   ControllerRegistrationList m_registrations;
 

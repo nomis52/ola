@@ -29,7 +29,7 @@
 #include <ola/util/Backoff.h>
 
 #include <string>
-#include <vector>
+#include <set>
 
 #include "tools/e133/AvahiOlaPoll.h"
 
@@ -38,7 +38,7 @@
  */
 class ClientStateChangeListener {
  public:
-  virtual ~ClientStateChangeListener();
+  virtual ~ClientStateChangeListener() {}
 
   /**
    * @brief Called when the state changes.
@@ -100,7 +100,7 @@ class AvahiOlaClient {
   /**
    * @brief Return the last error as a string.
    */
-  std::string GetLastError()
+  std::string GetLastError();
 
   /**
    * @brief Called by the avahi callbacks when the client state changes.
@@ -108,8 +108,10 @@ class AvahiOlaClient {
   void ClientStateChanged(AvahiClientState state,
                           AvahiClient *client);
 
+  void ReconnectTimeout();
+
  private:
-  typedef std::vector<ClientStateChangeListener*> StateChangeListeners;
+  typedef std::set<ClientStateChangeListener*> StateChangeListeners;
 
   AvahiOlaPoll *m_poller;
   AvahiClient *m_client;
@@ -119,10 +121,9 @@ class AvahiOlaClient {
 
   StateChangeListeners m_state_change_listeners;
 
-  void ReconnectTimeout();
   void CreateNewClient();
   void SetUpReconnectTimeout();
 
-  DISALLOW_COPY_AND_ASSIGN(AvahiClient);
+  DISALLOW_COPY_AND_ASSIGN(AvahiOlaClient);
 };
 #endif  // TOOLS_E133_AVAHIOLACLIENT_H_

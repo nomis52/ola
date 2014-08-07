@@ -51,8 +51,8 @@ namespace {
 static void client_callback(AvahiClient *client,
                             AvahiClientState state,
                             void *data) {
-  AvahiOlaClient *client = reinterpret_cast<AvahiOlaClient*>(data);
-  client->ClientStateChanged(state, client);
+  AvahiOlaClient *ola_client = reinterpret_cast<AvahiOlaClient*>(data);
+  ola_client->ClientStateChanged(state, client);
 }
 
 static void reconnect_callback(AvahiTimeout*, void *data) {
@@ -68,7 +68,7 @@ static void reconnect_callback(AvahiTimeout*, void *data) {
 
 
 AvahiOlaClient::AvahiOlaClient(AvahiOlaPoll *poller)
-    : m_poller(poller) {
+    : m_poller(poller),
       m_client(NULL),
       m_state(AVAHI_CLIENT_CONNECTING),
       m_reconnect_timeout(NULL),
@@ -85,7 +85,7 @@ void AvahiOlaClient::Start() {
   CreateNewClient();
 }
 
-void Stop() {
+void AvahiOlaClient::Stop() {
   if (m_client) {
     avahi_client_free(m_client);
     m_client = NULL;
@@ -99,7 +99,7 @@ void AvahiOlaClient::AddStateChangeListener(
 
 void AvahiOlaClient::RemoveStateChangeListener(
     ClientStateChangeListener *listener) {
-  STLRemote(&m_state_change_listeners, listener);
+  ola::STLRemove(&m_state_change_listeners, listener);
 }
 
 AvahiEntryGroup* AvahiOlaClient::CreateEntryGroup(
@@ -148,7 +148,7 @@ void AvahiOlaClient::ClientStateChanged(AvahiClientState state,
 
   StateChangeListeners::iterator iter = m_state_change_listeners.begin();
   for (; iter != m_state_change_listeners.end(); ++iter) {
-    iter->ClientStateChanged(state);
+    (*iter)->ClientStateChanged(state);
   }
 
   switch (state) {
@@ -156,7 +156,7 @@ void AvahiOlaClient::ClientStateChanged(AvahiClientState state,
       SetUpReconnectTimeout();
       break;
     default:
-      {};
+      {}
   }
 }
 
@@ -174,10 +174,10 @@ void AvahiOlaClient::CreateNewClient() {
     return;
   }
 
-  if (m_avahi_poll) {
+  if (m_poller) {
     int error;
     // In the successful case, m_client is set in the ClientStateChanged method
-    avahi_client_new(m_avahi_poll->GetPoll(),
+    avahi_client_new(m_poller->GetPoll(),
                      AVAHI_CLIENT_NO_FAIL, client_callback, this,
                      &error);
     if (m_client) {
@@ -199,7 +199,7 @@ void AvahiOlaClient::SetUpReconnectTimeout() {
   struct timeval tv;
   delay.AsTimeval(&tv);
 
-  const AvahiPoll *poll = m_avahi_poll->GetPoll();
+  const AvahiPoll *poll = m_poller->GetPoll();
   if (m_reconnect_timeout) {
     poll->timeout_update(m_reconnect_timeout, &tv);
   } else {
