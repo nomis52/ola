@@ -127,7 +127,7 @@ AvahiOlaPoll::AvahiOlaPoll(ola::io::SelectServerInterface *ss)
   m_poll.timeout_new = ola_timeout_new;
   m_poll.timeout_free = ola_timeout_free;
   m_poll.timeout_update = ola_timeout_update;
-};
+}
 
 AvahiOlaPoll::~AvahiOlaPoll() {
   if (!m_watch_map.empty()) {
