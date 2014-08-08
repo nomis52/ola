@@ -30,6 +30,7 @@
 #include <ola/io/Descriptor.h>
 #include <ola/io/SelectServer.h>
 #include <ola/thread/CallbackThread.h>
+#include <ola/thread/Future.h>
 #include <ola/thread/Mutex.h>
 #include <ola/util/Backoff.h>
 #include <map>
@@ -96,7 +97,7 @@ class AvahiE133DiscoveryAgent : public E133DiscoveryAgentInterface,
   ControllerResolverList m_orphaned_controllers;
   ola::thread::Mutex m_controllers_mu;
 
-  void RunThread();
+  void RunThread(ola::thread::Future<void> *f);
 
   void LocateControllerServices();
   void AddController(AvahiIfIndex interface,

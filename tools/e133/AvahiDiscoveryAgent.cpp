@@ -29,10 +29,11 @@
 
 #include <netinet/in.h>
 #include <ola/Callback.h>
+#include <ola/io/Descriptor.h>
 #include <ola/Logging.h>
 #include <ola/network/NetworkUtils.h>
 #include <ola/stl/STLUtils.h>
-#include <ola/io/Descriptor.h>
+#include <ola/thread/Future.h>
 #include <stdint.h>
 
 #include <memory>
@@ -568,9 +569,11 @@ AvahiE133DiscoveryAgent::~AvahiE133DiscoveryAgent() {
 }
 
 bool AvahiE133DiscoveryAgent::Start() {
+  ola::thread::Future<void> f;
   m_thread.reset(new ola::thread::CallbackThread(ola::NewSingleCallback(
-      this, &AvahiE133DiscoveryAgent::RunThread)));
+      this, &AvahiE133DiscoveryAgent::RunThread, &f)));
   m_thread->Start();
+  f.Get();
   return true;
 }
 
@@ -639,11 +642,12 @@ void AvahiE133DiscoveryAgent::ClientStateChanged(AvahiClientState state) {
   }
 }
 
-void AvahiE133DiscoveryAgent::RunThread() {
+void AvahiE133DiscoveryAgent::RunThread(ola::thread::Future<void> *future) {
   m_avahi_poll.reset(new AvahiOlaPoll(&m_ss));
   m_client.reset(new AvahiOlaClient(m_avahi_poll.get()));
-  m_client->Start();
 
+  m_ss.Execute(NewSingleCallback(future, &ola::thread::Future<void>::Set));
+  m_ss.Execute(NewSingleCallback(m_client.get(), &AvahiOlaClient::Start));
   m_ss.Run();
 
   if (m_controller_browser) {
