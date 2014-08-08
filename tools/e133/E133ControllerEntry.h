@@ -32,7 +32,7 @@
  *
  * The information in this struct is from the A and TXT records in DNS-SD.
  */
-struct E133ControllerEntry {
+class E133ControllerEntry {
  public:
   /** @brief The service name of the controller */
   std::string service_name;
@@ -58,13 +58,9 @@ struct E133ControllerEntry {
   /** @brief The controller's manufacturer. */
   std::string manufacturer;
 
-  E133ControllerEntry()
-      : uid(0, 0),
-        e133_version(E133_VERSION),
-        manufacturer("Open Lighting") {
-  }
+  E133ControllerEntry();
 
-  bool operator==(const E133ControllerEntry &other) {
+  bool operator==(const E133ControllerEntry &other) const {
     return (service_name == other.service_name &&
             address == other.address &&
             priority == other.priority &&
@@ -75,7 +71,13 @@ struct E133ControllerEntry {
             manufacturer == other.manufacturer);
   }
 
-  std::string ServiceName() const;
+  std::string ServiceName() const {
+    return m_actual_service_name;
+  }
+
+  void UpdateFrom(const E133ControllerEntry &other);
+
+  void SetServiceName(const std::string &service_name);
 
   std::string ToString() const;
 
@@ -85,6 +87,9 @@ struct E133ControllerEntry {
   }
 
   static const uint8_t E133_VERSION = 1;
+
+ private:
+  std::string m_actual_service_name;
 };
 
 

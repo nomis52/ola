@@ -154,6 +154,7 @@ AvahiWatch* AvahiOlaPoll::WatchNew(
 
   watch->poll = this;
   watch->descriptor = new UnmanagedFileDescriptor(fd);
+  watch->registered_events = static_cast<AvahiWatchEvent>(0);
   watch->callback = callback;
   watch->userdata = userdata;
 

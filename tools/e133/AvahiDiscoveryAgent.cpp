@@ -22,7 +22,9 @@
 
 #include <avahi-client/lookup.h>
 #include <avahi-client/publish.h>
+#include <avahi-common/alternative.h>
 #include <avahi-common/error.h>
+#include <avahi-common/malloc.h>
 #include <avahi-common/strlst.h>
 
 #include <netinet/in.h>
@@ -33,17 +35,14 @@
 #include <ola/io/Descriptor.h>
 #include <stdint.h>
 
-#include <map>
 #include <memory>
 #include <string>
-#include <vector>
 #include <utility>
 
 #include "tools/e133/AvahiHelper.h"
 #include "tools/e133/AvahiOlaPoll.h"
 
 using ola::io::SelectServerInterface;
-using ola::io::UnmanagedFileDescriptor;
 using ola::network::HostToNetwork;
 using ola::network::IPV4Address;
 using ola::network::IPV4SocketAddress;
@@ -55,7 +54,6 @@ using ola::TimeInterval;
 using std::auto_ptr;
 using std::ostringstream;
 using std::string;
-using std::vector;
 
 // ControllerResolver
 // ----------------------------------------------------------------------------
@@ -127,9 +125,11 @@ class ControllerRegistration : public ClientStateChangeListener {
   E133ControllerEntry m_controller_entry;
   AvahiEntryGroup *m_entry_group;
 
-  void PerformRegistration(const E133ControllerEntry &controller);
-  void UpdateRegistration(const E133ControllerEntry &controller);
+  void PerformRegistration();
+  bool AddGroupEntry(AvahiEntryGroup *group);
+  void UpdateRegistration(const E133ControllerEntry &new_controller);
   void CancelRegistration();
+  void ChooseAlternateServiceName();
 
   AvahiStringList *BuildTxtRecord(const E133ControllerEntry &controller);
 
@@ -348,7 +348,7 @@ ControllerRegistration::~ControllerRegistration() {
 void ControllerRegistration::ClientStateChanged(AvahiClientState state) {
   switch (state) {
     case AVAHI_CLIENT_S_RUNNING:
-      PerformRegistration(m_controller_entry);
+      PerformRegistration();
       break;
     default:
       CancelRegistration();
@@ -372,63 +372,125 @@ void ControllerRegistration::RegisterOrUpdate(
     OLA_INFO << "Updating controller registration for " << controller.address;
     UpdateRegistration(controller);
   } else {
-    PerformRegistration(controller);
+    m_controller_entry = controller;
+    PerformRegistration();
   }
-  m_controller_entry = controller;
 }
 
 void ControllerRegistration::GroupEvent(AvahiEntryGroupState state) {
   OLA_INFO << "Group state changed to " << GroupStateToString(state);
+  if (state == AVAHI_ENTRY_GROUP_COLLISION) {
+    ChooseAlternateServiceName();
+    PerformRegistration();
+  }
 }
 
-void ControllerRegistration::PerformRegistration(
-    const E133ControllerEntry &controller) {
+void ControllerRegistration::PerformRegistration() {
+  AvahiEntryGroup *group = NULL;
   if (m_entry_group) {
-    OLA_WARN << "Already got an AvahiEntryGroup!";
+    group = m_entry_group;
+    m_entry_group = NULL;
+  } else {
+    group = m_client->CreateEntryGroup(entry_group_callback, this);
+    if (!group) {
+      OLA_WARN << "avahi_entry_group_new() failed: "
+               << m_client->GetLastError();
+      return;
+    }
   }
 
-  m_entry_group = m_client->CreateEntryGroup(entry_group_callback, this);
-  if (!m_entry_group) {
-    OLA_WARN << "avahi_entry_group_new() failed: " << m_client->GetLastError();
-    return;
+  if (!AddGroupEntry(group)) {
+    avahi_entry_group_free(group);
+  } else {
+    m_entry_group = group;
   }
+}
 
-  AvahiStringList *txt_str_list = BuildTxtRecord(controller);
+bool ControllerRegistration::AddGroupEntry(AvahiEntryGroup *group) {
+  AvahiStringList *txt_str_list = BuildTxtRecord(m_controller_entry);
 
-  // Change to  avahi_entry_group_add_service_strlst
   int ret = avahi_entry_group_add_service_strlst(
-      m_entry_group, AVAHI_IF_UNSPEC, AVAHI_PROTO_UNSPEC,
+      group, AVAHI_IF_UNSPEC, AVAHI_PROTO_UNSPEC,
       static_cast<AvahiPublishFlags>(0),
-      controller.ServiceName().c_str(),
+      m_controller_entry.ServiceName().c_str(),
       E133DiscoveryAgentInterface::E133_CONTROLLER_SERVICE,
-      NULL, NULL, controller.address.Port(), txt_str_list);
+      NULL, NULL, m_controller_entry.address.Port(), txt_str_list);
 
   avahi_string_list_free(txt_str_list);
 
   if (ret < 0) {
-    OLA_WARN << "Failed to add " << controller << " : " << avahi_strerror(ret);
-
     if (ret == AVAHI_ERR_COLLISION) {
-      OLA_WARN << "AVAHI_ERR_COLLISION";
+      ChooseAlternateServiceName();
+      PerformRegistration();
+    } else {
+      OLA_WARN << "Failed to add " << m_controller_entry << " : "
+               << avahi_strerror(ret);
     }
-    return;
+    return false;
   }
 
-  // Add subtypes here
+  if (!m_controller_entry.scope.empty()) {
+    ostringstream sub_type;
+    sub_type << "_" << m_controller_entry.scope << "._sub."
+             << E133DiscoveryAgentInterface::E133_CONTROLLER_SERVICE;
 
-  ret = avahi_entry_group_commit(m_entry_group);
+    ret = avahi_entry_group_add_service_subtype(
+        group, AVAHI_IF_UNSPEC, AVAHI_PROTO_UNSPEC,
+        static_cast<AvahiPublishFlags>(0),
+        m_controller_entry.ServiceName().c_str(),
+        E133DiscoveryAgentInterface::E133_CONTROLLER_SERVICE,
+        NULL, sub_type.str().c_str());
+
+    if (ret < 0) {
+      OLA_WARN << "Failed to add subtype for " << m_controller_entry << " : "
+               << avahi_strerror(ret);
+      return false;
+    }
+  }
+
+  ret = avahi_entry_group_commit(group);
   if (ret < 0) {
-    OLA_WARN << "Failed to commit controller " << controller << " : "
+    OLA_WARN << "Failed to commit controller " << m_controller_entry << " : "
              << avahi_strerror(ret);
   }
+  OLA_INFO << "committed " << group << " : "
+           << m_controller_entry.ServiceName();
+  return ret == 0;
 }
 
 void ControllerRegistration::UpdateRegistration(
-    const E133ControllerEntry &controller) {
-  // Check for scope change?
+    const E133ControllerEntry &new_controller) {
+  if (new_controller == m_controller_entry) {
+    return;
+  }
 
-  // TODO(simon): implement me
-  (void) controller;
+  if (new_controller.scope != m_controller_entry.scope) {
+    // We require a full reset.
+    avahi_entry_group_reset(m_entry_group);
+    m_controller_entry.UpdateFrom(new_controller);
+    PerformRegistration();
+    return;
+  }
+
+  m_controller_entry.UpdateFrom(new_controller);
+
+  AvahiStringList *txt_str_list = BuildTxtRecord(m_controller_entry);
+
+  OLA_INFO << "updating  " << m_entry_group << " : " <<
+    m_controller_entry.ServiceName();
+  int ret = avahi_entry_group_update_service_txt_strlst(
+      m_entry_group, AVAHI_IF_UNSPEC, AVAHI_PROTO_UNSPEC,
+      static_cast<AvahiPublishFlags>(0),
+      m_controller_entry.ServiceName().c_str(),
+      E133DiscoveryAgentInterface::E133_CONTROLLER_SERVICE,
+      NULL, txt_str_list);
+
+  avahi_string_list_free(txt_str_list);
+
+  if (ret < 0) {
+    OLA_WARN << "Failed to update controller " << m_controller_entry << ": "
+             << avahi_strerror(ret);
+  }
 }
 
 void ControllerRegistration::CancelRegistration() {
@@ -437,6 +499,15 @@ void ControllerRegistration::CancelRegistration() {
   }
   avahi_entry_group_free(m_entry_group);
   m_entry_group = NULL;
+}
+
+void ControllerRegistration::ChooseAlternateServiceName() {
+  char *new_name = avahi_alternative_service_name(
+    m_controller_entry.ServiceName().c_str());
+  OLA_INFO << "Renamed " << m_controller_entry.ServiceName() << " to "
+           << new_name;
+  m_controller_entry.SetServiceName(new_name);
+  avahi_free(new_name);
 }
 
 AvahiStringList *ControllerRegistration::BuildTxtRecord(
@@ -578,6 +649,8 @@ void AvahiE133DiscoveryAgent::RunThread() {
   if (m_controller_browser) {
     avahi_service_browser_free(m_controller_browser);
   }
+
+  ola::STLDeleteValues(&m_registrations);
 
   m_client->Stop();
   m_client.reset();

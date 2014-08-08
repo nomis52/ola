@@ -26,17 +26,37 @@
 #include <string>
 #include <iostream>
 
-std::string E133ControllerEntry::ServiceName() const {
-  if (!service_name.empty()) {
-    return service_name;
-  }
+using std::string;
 
-  std::ostringstream str;
-  str << "OLA Controller " << address.Port();
-  return str.str();
+E133ControllerEntry::E133ControllerEntry()
+    : uid(0, 0),
+      e133_version(E133_VERSION),
+      manufacturer("Open Lighting") {
+  if (service_name.empty()) {
+    std::ostringstream str;
+    str << "OLA Controller";
+    m_actual_service_name = str.str();
+  } else {
+    m_actual_service_name = service_name;
+  }
 }
 
-std::string E133ControllerEntry::ToString() const {
+void E133ControllerEntry::UpdateFrom(const E133ControllerEntry &other) {
+  service_name = other.service_name;
+  address = other.address;
+  priority = other.priority;
+  uid = other.uid;
+  scope = other.scope;
+  e133_version = other.e133_version;
+  model = other.model;
+  manufacturer = other.manufacturer;
+}
+
+void E133ControllerEntry::SetServiceName(const std::string &service_name) {
+  m_actual_service_name = service_name;
+}
+
+string E133ControllerEntry::ToString() const {
   std::ostringstream out;
   out << "Controller: '" << service_name << "' @ " << address << ", priority "
       << static_cast<int>(priority) << ", scope " << scope << ", UID " << uid
