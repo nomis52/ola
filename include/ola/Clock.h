@@ -119,7 +119,7 @@ class TimeInterval {
  public:
   // Constructors
   TimeInterval() {}
-  TimeInterval(const struct timeval &tv) : m_interval(tv) {}
+  explicit TimeInterval(const struct timeval &tv) : m_interval(tv) {}
   TimeInterval(int32_t sec, int32_t usec) : m_interval(sec, usec) {}
   explicit TimeInterval(int64_t usec) : m_interval(usec) {}
 
