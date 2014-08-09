@@ -679,8 +679,11 @@ void AvahiE133DiscoveryAgent::FindControllers(
   for (; iter != m_controllers.end(); ++iter) {
     E133ControllerEntry entry;
     if ((*iter)->GetControllerEntry(&entry)) {
-      OLA_INFO << "Added " << entry;
-      controllers->push_back(entry);
+      if (entry.scope != m_scope) {
+        OLA_WARN << "Mismatched scope for " << entry;
+      } else {
+        controllers->push_back(entry);
+      }
     }
   }
 }
