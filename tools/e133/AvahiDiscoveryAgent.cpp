@@ -780,10 +780,16 @@ void AvahiE133DiscoveryAgent::InternalRegisterService(
 
 
 void AvahiE133DiscoveryAgent::StartServiceBrowser() {
-  // TODO(simon): add the scope in here!!!
+  ostringstream service;
+  {
+    MutexLocker lock(&m_controllers_mu);
+    service << "_" << m_scope;
+  }
+  service << "._sub." << E133_CONTROLLER_SERVICE;
+
   m_controller_browser = m_client->CreateServiceBrowser(
       AVAHI_IF_UNSPEC, AVAHI_PROTO_UNSPEC,
-      E133_CONTROLLER_SERVICE, NULL,
+      service.str().c_str(), NULL,
       static_cast<AvahiLookupFlags>(0), browse_callback, this);
   if (!m_controller_browser) {
     OLA_WARN << "Failed to start browsing for " << E133_CONTROLLER_SERVICE
