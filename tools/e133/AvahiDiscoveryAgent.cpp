@@ -653,14 +653,13 @@ void AvahiE133DiscoveryAgent::ClientStateChanged(AvahiClientState state) {
 void AvahiE133DiscoveryAgent::RunThread(ola::thread::Future<void> *future) {
   m_avahi_poll.reset(new AvahiOlaPoll(&m_ss));
   m_client.reset(new AvahiOlaClient(m_avahi_poll.get()));
+  m_client->AddStateChangeListener(this);
 
   m_ss.Execute(NewSingleCallback(future, &ola::thread::Future<void>::Set));
   m_ss.Execute(NewSingleCallback(m_client.get(), &AvahiOlaClient::Start));
   m_ss.Run();
 
-  if (m_controller_browser) {
-    avahi_service_browser_free(m_controller_browser);
-  }
+  m_client->RemoveStateChangeListener(this);
 
   {
     MutexLocker lock(&m_controllers_mu);
@@ -823,11 +822,11 @@ void AvahiE133DiscoveryAgent::AddController(AvahiIfIndex interface,
 
   ControllerResolver *controller = new ControllerResolver(
       interface, protocol, name, type, domain);
-
+  delete controller;
   /*
   DNSServiceErrorType error = controller->StartResolution();
   */
-  OLA_INFO << "Starting resolution for " << *controller;
+  // OLA_INFO << "Starting resolution for " << *controller;
 
   /*
   if (error == kDNSServiceErr_NoError) {
