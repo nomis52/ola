@@ -58,8 +58,8 @@ string GroupStateToString(AvahiEntryGroupState state) {
   }
 }
 
-string BrowseEventToString(AvahiBrowserEvent state) {
-  switch (state) {
+string BrowseEventToString(AvahiBrowserEvent event) {
+  switch (event) {
     case AVAHI_BROWSER_NEW:
       return "AVAHI_BROWSER_NEW";
     case AVAHI_BROWSER_REMOVE:
@@ -72,5 +72,29 @@ string BrowseEventToString(AvahiBrowserEvent state) {
       return "AVAHI_BROWSER_FAILURE";
     default:
       return "Unknown event";
+  }
+}
+
+string ResolveEventToString(AvahiResolverEvent event) {
+  switch (event) {
+    case AVAHI_RESOLVER_FOUND:
+      return "AVAHI_RESOLVER_FOUND";
+    case AVAHI_RESOLVER_FAILURE:
+      return "AVAHI_RESOLVER_FAILURE";
+    default:
+      return "Unknown event";
+  }
+}
+
+string ProtoToString(AvahiProtocol protocol) {
+  switch (protocol) {
+    case AVAHI_PROTO_INET:
+      return "AVAHI_PROTO_INET";
+    case AVAHI_PROTO_INET6:
+      return "AVAHI_PROTO_INET6";
+    case AVAHI_PROTO_UNSPEC:
+      return "AVAHI_PROTO_UNSPEC";
+    default:
+      return "Unknown protocol";
   }
 }

@@ -123,6 +123,25 @@ AvahiServiceBrowser* AvahiOlaClient::CreateServiceBrowser(
                                    domain, flags, callback, userdata);
 }
 
+AvahiServiceResolver* AvahiOlaClient::CreateServiceResolver(
+    AvahiIfIndex interface,
+    AvahiProtocol protocol,
+    const std::string &name,
+    const std::string &type,
+    const std::string &domain,
+    AvahiProtocol aprotocol,
+    AvahiLookupFlags flags,
+    AvahiServiceResolverCallback callback,
+    void *userdata) {
+  if (!m_client) {
+    return NULL;
+  }
+
+  return avahi_service_resolver_new(
+      m_client, interface, protocol, name.c_str(), type.c_str(),
+      domain.c_str(), aprotocol, flags, callback, userdata);
+}
+
 string AvahiOlaClient::GetLastError() {
   if (m_client) {
     return avahi_strerror(avahi_client_errno(m_client));

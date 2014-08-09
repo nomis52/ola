@@ -98,6 +98,20 @@ class AvahiOlaClient {
       void *userdata);
 
   /**
+   * @brief Create a new AvahiServiceResolver from this client.
+   */
+  AvahiServiceResolver* CreateServiceResolver(
+      AvahiIfIndex interface,
+      AvahiProtocol protocol,
+      const std::string &name,
+      const std::string &type,
+      const std::string &domain,
+      AvahiProtocol aprotocol,
+      AvahiLookupFlags flags,
+      AvahiServiceResolverCallback callback,
+      void *userdata);
+
+  /**
    * @brief Return the last error as a string.
    */
   std::string GetLastError();

@@ -31,4 +31,8 @@ std::string ClientStateToString(AvahiClientState state);
 std::string GroupStateToString(AvahiEntryGroupState state);
 
 std::string BrowseEventToString(AvahiBrowserEvent state);
+
+std::string ResolveEventToString(AvahiResolverEvent state);
+
+std::string ProtoToString(AvahiProtocol protocol);
 #endif  // TOOLS_E133_AVAHIHELPER_H_

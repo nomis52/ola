@@ -44,15 +44,11 @@
 #include "tools/e133/AvahiHelper.h"
 #include "tools/e133/AvahiOlaPoll.h"
 
-using ola::io::SelectServerInterface;
-using ola::network::HostToNetwork;
 using ola::network::IPV4Address;
 using ola::network::IPV4SocketAddress;
-using ola::network::NetworkToHost;
 using ola::NewCallback;
 using ola::NewSingleCallback;
 using ola::thread::MutexLocker;
-using ola::TimeInterval;
 using std::auto_ptr;
 using std::ostringstream;
 using std::string;
@@ -61,13 +57,13 @@ using std::string;
 // ----------------------------------------------------------------------------
 class ControllerResolver {
  public:
-  ControllerResolver(AvahiIfIndex interface_index,
+  ControllerResolver(AvahiOlaClient *client,
+                     AvahiIfIndex interface_index,
                      AvahiProtocol protocol,
                      const std::string &service_name,
                      const std::string &type,
                      const std::string &domain);
 
-  ControllerResolver(const ControllerResolver &other);
   ~ControllerResolver();
 
   bool operator==(const ControllerResolver &other) const;
@@ -79,22 +75,20 @@ class ControllerResolver {
     return out << info.ToString();
   }
 
-  // DNSServiceErrorType StartResolution();
+  bool StartResolution();
 
   bool GetControllerEntry(E133ControllerEntry *entry);
 
-  /*
-  void ResolveHandler(
-      DNSServiceErrorType errorCode,
-      const string &host_target,
-      uint16_t port,
-      uint16_t txtLen,
-      const unsigned char *txtRecord);
-
-  void UpdateAddress(const IPV4Address &v4_address);
-  */
+  void ResolveEvent(AvahiResolverEvent event,
+                    const AvahiAddress *a,
+                    uint16_t port,
+                    AvahiStringList *txt);
 
  private:
+  AvahiOlaClient *m_client;
+  bool m_resolve_in_progress;
+  AvahiServiceResolver *m_resolver;
+
   const AvahiIfIndex m_interface_index;
   const AvahiProtocol m_protocol;
   const std::string m_service_name;
@@ -103,6 +97,19 @@ class ControllerResolver {
 
   uint8_t m_priority;
   ola::network::IPV4SocketAddress m_resolved_address;
+  std::string m_scope;
+  ola::rdm::UID m_uid;
+  std::string m_model;
+  std::string m_manufacturer;
+
+  bool ExtractString(AvahiStringList *txt_list,
+                     const std::string &key,
+                     std::string *dest);
+  bool ExtractInt(AvahiStringList *txt_list,
+                  const std::string &key, unsigned int *dest);
+  bool CheckVersionMatches(
+      AvahiStringList *txt_list,
+      const string &key, unsigned int version);
 
   static const uint8_t DEFAULT_PRIORITY;
 };
@@ -155,9 +162,35 @@ static void browse_callback(AvahiServiceBrowser *b,
   AvahiE133DiscoveryAgent *agent =
       reinterpret_cast<AvahiE133DiscoveryAgent*>(data);
 
-  OLA_INFO << "In browse_callback: " << BrowseEventToString(event);
   agent->BrowseEvent(interface, protocol, event, name, type, domain, flags);
   (void) b;
+}
+
+static void resolve_callback(AvahiServiceResolver *r,
+                             AvahiIfIndex interface,
+                             AvahiProtocol protocol,
+                             AvahiResolverEvent event,
+                             const char *name,
+                             const char *type,
+                             const char *domain,
+                             const char *host_name,
+                             const AvahiAddress *a,
+                             uint16_t port,
+                             AvahiStringList *txt,
+                             AvahiLookupResultFlags flags,
+                             void *userdata) {
+  ControllerResolver *resolver =
+    reinterpret_cast<ControllerResolver*>(userdata);
+  resolver->ResolveEvent(event, a, port, txt);
+
+  (void) r;
+  (void) interface;
+  (void) protocol;
+  (void) name;
+  (void) type;
+  (void) domain;
+  (void) host_name;
+  (void) flags;
 }
 
 static void entry_group_callback(AvahiEntryGroup *group,
@@ -172,39 +205,29 @@ static void entry_group_callback(AvahiEntryGroup *group,
 
 // ControllerResolver
 // ----------------------------------------------------------------------------
-ControllerResolver::ControllerResolver(AvahiIfIndex interface_index,
+ControllerResolver::ControllerResolver(AvahiOlaClient *client,
+                                       AvahiIfIndex interface_index,
                                        AvahiProtocol protocol,
                                        const std::string &service_name,
                                        const std::string &type,
                                        const std::string &domain)
-    : m_interface_index(interface_index),
+    : m_client(client),
+      m_resolve_in_progress(false),
+      m_resolver(NULL),
+      m_interface_index(interface_index),
       m_protocol(protocol),
       m_service_name(service_name),
       m_type(type),
-      m_domain(domain) {
+      m_domain(domain),
+      m_uid(0, 0) {
 }
 
-ControllerResolver::ControllerResolver(
-    const ControllerResolver &other)
-    : m_interface_index(other.m_interface_index),
-      m_protocol(other.m_protocol),
-      m_service_name(other.m_service_name),
-      m_type(other.m_type),
-      m_domain(other.m_domain) {
-}
 
 ControllerResolver::~ControllerResolver() {
-  /*
-  if (resolve_in_progress) {
-    m_io_adapter->RemoveDescriptor(m_resolve_ref);
-    DNSServiceRefDeallocate(m_resolve_ref);
+  if (m_resolver) {
+    avahi_service_resolver_free(m_resolver);
+    m_resolver = NULL;
   }
-
-  if (to_addr_in_progress) {
-    m_io_adapter->RemoveDescriptor(m_to_addr_ref);
-    DNSServiceRefDeallocate(m_to_addr_ref);
-  }
-  */
 }
 
 bool ControllerResolver::operator==(const ControllerResolver &other) const {
@@ -222,116 +245,155 @@ string ControllerResolver::ToString() const {
   return str.str();
 }
 
-/*
-DNSServiceErrorType ControllerResolver::StartResolution() {
-  if (resolve_in_progress) {
-    return kDNSServiceErr_NoError;
+bool ControllerResolver::StartResolution() {
+  if (m_resolver) {
+    return true;
   }
 
-  DNSServiceErrorType error = DNSServiceResolve(
-      &m_resolve_ref,
-      0,
-      interface_index,
-      service_name.c_str(),
-      regtype.c_str(),
-      reply_domain.c_str(),
-      &ResolveServiceCallback,
-      reinterpret_cast<void*>(this));
-  if (error == kDNSServiceErr_NoError) {
-    resolve_in_progress = true;
-    m_io_adapter->AddDescriptor(m_resolve_ref);
+  m_resolver = m_client->CreateServiceResolver(
+      m_interface_index, m_protocol, m_service_name, m_type, m_domain,
+        AVAHI_PROTO_INET, static_cast<AvahiLookupFlags>(0), resolve_callback,
+      this);
+  if (!m_resolver) {
+    OLA_WARN << "Failed to start resolution for " << m_service_name << "."
+             << m_type << ": " << m_client->GetLastError();
+    return false;
   }
-  return error;
+  return true;
 }
-*/
 
 bool ControllerResolver::GetControllerEntry(E133ControllerEntry *entry) {
-  /*
   if (m_resolved_address.Host().IsWildcard()) {
     return false;
   }
 
-  */
+  entry->service_name = m_service_name;
   entry->priority = m_priority;
-  // info->address = m_resolved_address;
+  entry->scope = m_scope;
+  entry->uid = m_uid;
+  entry->model = m_model;
+  entry->manufacturer = m_manufacturer;
+  entry->address = m_resolved_address;
   return true;
 }
 
-/*
-void ControllerResolver::ResolveHandler(
-    DNSServiceErrorType errorCode,
-    const string &host_target,
-    uint16_t port,
-    uint16_t txtLen,
-    const unsigned char *txtRecord) {
-  // Do we need to remove here or let this continue running?
-  // m_io_adapter->RemoveDescriptor(m_);
-
-  if (errorCode != kDNSServiceErr_NoError) {
-    OLA_WARN << "Failed to resolve " << this->ToString();
+void ControllerResolver::ResolveEvent(AvahiResolverEvent event,
+                                      const AvahiAddress *address,
+                                      uint16_t port,
+                                      AvahiStringList *txt) {
+  if (event == AVAHI_RESOLVER_FAILURE) {
+    OLA_WARN << "Failed to resolve " << m_service_name << "." << m_type
+             << ", proto: " << ProtoToString(m_protocol);
     return;
   }
 
-  OLA_INFO << "Got resolv response " << host_target << ":"
-           << port;
+  if (address->proto != AVAHI_PROTO_INET) {
+    return;
+  }
 
-  uint8_t priority = DEFAULT_PRIORITY;
-  if (TXTRecordContainsKey(txtLen, txtRecord, PRIORITY_KEY)) {
-    uint8_t value_length = 0;
-    const void *value = TXTRecordGetValuePtr(txtLen, txtRecord, PRIORITY_KEY,
-                                             &value_length);
-    if (value == NULL) {
-      OLA_WARN << "Missing " << PRIORITY_KEY << " from " << host_target;
-    } else {
-      const string value_str(
-          reinterpret_cast<const char*>(value), value_length);
-      if (!ola::StringToInt(value_str, &priority)) {
-        OLA_WARN << "Invalid value for " << PRIORITY_KEY << " in "
-                 << host_target;
-      }
+
+  OLA_INFO << "Got resolve event: " << ResolveEventToString(event);
+
+  if (!CheckVersionMatches(txt,
+                           E133DiscoveryAgentInterface::TXT_VERSION_KEY,
+                           E133DiscoveryAgentInterface::TXT_VERSION)) {
+    return;
+  }
+
+  if (!CheckVersionMatches(txt,
+                           E133DiscoveryAgentInterface::E133_VERSION_KEY,
+                           E133DiscoveryAgentInterface::E133_VERSION)) {
+    return;
+  }
+
+  unsigned int priority;
+  if (!ExtractInt(txt, E133DiscoveryAgentInterface::PRIORITY_KEY, &priority)) {
+    return;
+  }
+
+  if (!ExtractString(txt, E133DiscoveryAgentInterface::SCOPE_KEY, &m_scope)) {
+    return;
+  }
+
+  // These are optional?
+  string uid_str;
+  if (ExtractString(txt, E133DiscoveryAgentInterface::UID_KEY, &uid_str)) {
+    auto_ptr<ola::rdm::UID> uid(ola::rdm::UID::FromString(uid_str));
+    if (uid.get()) {
+      m_uid = *uid;
     }
-  } else {
-    OLA_WARN << host_target << " is missing key " << PRIORITY_KEY
-             << " in the TXT record";
   }
 
-  m_priority = priority;
-  m_resolved_address.Port(port);
+  ExtractString(txt, E133DiscoveryAgentInterface::MODEL_KEY, &m_model);
+  ExtractString(txt, E133DiscoveryAgentInterface::MANUFACTURER_KEY,
+                &m_manufacturer);
 
-  if (host_target == m_host_target) {
-    return;
-  }
-  m_host_target = host_target;
-
-  // Otherwise start a new resolution
-  if (to_addr_in_progress) {
-    m_io_adapter->RemoveDescriptor(m_to_addr_ref);
-    DNSServiceRefDeallocate(m_to_addr_ref);
-  }
-
-  OLA_INFO << "Calling DNSServiceGetAddrInfo for " << m_host_target;
-  DNSServiceErrorType error = DNSServiceGetAddrInfo(
-      &m_to_addr_ref,
-      0,
-      interface_index,
-      kDNSServiceProtocol_IPv4,
-      m_host_target.c_str(),
-      &ResolveAddressCallback,
-      reinterpret_cast<void*>(this));
-
-  if (error == kDNSServiceErr_NoError) {
-    m_io_adapter->AddDescriptor(m_to_addr_ref);
-  } else {
-    OLA_WARN << "DNSServiceGetAddrInfo for " << m_host_target
-             << " failed with " << error;
-  }
+  m_priority = static_cast<uint8_t>(priority);
+  m_resolved_address = IPV4SocketAddress(
+      IPV4Address(address->data.ipv4.address), port);
+  OLA_INFO << m_resolved_address;
 }
 
-void ControllerResolver::UpdateAddress(const IPV4Address &v4_address) {
-  m_resolved_address.Host(v4_address);
-  OLA_INFO << "New controller at " << m_resolved_address;
+bool ControllerResolver::ExtractString(AvahiStringList *txt_list,
+                                           const std::string &key,
+                                           std::string *dest) {
+  AvahiStringList *entry = avahi_string_list_find(txt_list, key.c_str());
+  if (!entry) {
+    return false;
+  }
+  char *key_result = NULL;
+  char *value = NULL;
+  size_t length = 0;
+
+  if (avahi_string_list_get_pair(entry, &key_result, &value, &length)) {
+    OLA_WARN << "avahi_string_list_get_pair for " << key << " failed";
+    return false;
+  }
+
+  if (key != string(key_result)) {
+    OLA_WARN << "Mismatched key, " << key << " != " << string(key_result);
+    avahi_free(key_result);
+    avahi_free(value);
+    return false;
+  }
+
+  *dest = string(value, length);
+  avahi_free(key_result);
+  avahi_free(value);
+  return true;
 }
-*/
+
+
+bool ControllerResolver::ExtractInt(AvahiStringList *txt_list,
+                                        const std::string &key,
+                                        unsigned int *dest) {
+  string value;
+  if (!ExtractString(txt_list, key, &value))
+    return false;
+
+  if (!ola::StringToInt(value, dest)) {
+    OLA_WARN << m_service_name << " has an invalid value of " << value
+             << " for " << key;
+    return false;
+  }
+  return true;
+}
+
+bool ControllerResolver::CheckVersionMatches(
+    AvahiStringList *txt_list,
+    const string &key, unsigned int expected_version) {
+  unsigned int version;
+  if (!ExtractInt(txt_list, key, &version)) {
+    return false;
+  }
+
+  if (version != expected_version) {
+    OLA_WARN << "Unknown version for " << key << " : " << version << " for "
+             << m_service_name;
+    return false;
+  }
+  return true;
+}
 
 // ControllerRegistration
 // ----------------------------------------------------------------------------
@@ -454,8 +516,6 @@ bool ControllerRegistration::AddGroupEntry(AvahiEntryGroup *group) {
     OLA_WARN << "Failed to commit controller " << m_controller_entry << " : "
              << avahi_strerror(ret);
   }
-  OLA_INFO << "committed " << group << " : "
-           << m_controller_entry.ServiceName();
   return ret == 0;
 }
 
@@ -619,6 +679,7 @@ void AvahiE133DiscoveryAgent::FindControllers(
   for (; iter != m_controllers.end(); ++iter) {
     E133ControllerEntry entry;
     if ((*iter)->GetControllerEntry(&entry)) {
+      OLA_INFO << "Added " << entry;
       controllers->push_back(entry);
     }
   }
@@ -685,99 +746,16 @@ void AvahiE133DiscoveryAgent::BrowseEvent(AvahiIfIndex interface,
       OLA_WARN << "(Browser) " << m_client->GetLastError();
       return;
     case AVAHI_BROWSER_NEW:
-      OLA_INFO << "(Browser) NEW: service " << name << " of type " << type
-               << " in domain " << domain;
       AddController(interface, protocol, name, type, domain);
       break;
     case AVAHI_BROWSER_REMOVE:
       RemoveController(interface, protocol, name, type, domain);
       break;
-    case AVAHI_BROWSER_ALL_FOR_NOW:
-    case AVAHI_BROWSER_CACHE_EXHAUSTED:
-      OLA_WARN << "(Browser) "
-               << (event == AVAHI_BROWSER_CACHE_EXHAUSTED ? "CACHE_EXHAUSTED" :
-                    "ALL_FOR_NOW");
-      break;
+    default:
+      {}
   }
   (void) flags;
 }
-
-/*
-
-void AvahiE133DiscoveryAgent::BrowseResult(DNSServiceFlags flags,
-                                           uint32_t interface_index,
-                                           const string &service_name,
-                                           const string &regtype,
-                                           const string &reply_domain) {
-  if (flags & kDNSServiceFlagsAdd) {
-    ControllerResolver *controller = new ControllerResolver(
-        m_io_adapter.get(), interface_index, service_name, regtype,
-        reply_domain);
-
-    DNSServiceErrorType error = controller->StartResolution();
-    OLA_INFO << "Starting resolution for " << *controller << ", ret was "
-             << error;
-
-    if (error == kDNSServiceErr_NoError) {
-      m_controllers.push_back(controller);
-      OLA_INFO << "Added " << *controller << " at " << m_controllers.back();
-    } else {
-      OLA_WARN << "Failed to start resolution for " << *controller;
-      delete controller;
-    }
-  } else {
-    ControllerResolver controller(m_io_adapter.get(), interface_index,
-                                  service_name, regtype, reply_domain);
-    ControllerResolverList::iterator iter = m_controllers.begin();
-    for (; iter != m_controllers.end(); ++iter) {
-      if (**iter == controller) {
-        // Cancel DNSServiceRef.
-        OLA_INFO << "Removed " << controller << " at " << *iter;
-        delete *iter;
-        m_controllers.erase(iter);
-        return;
-      }
-    }
-    OLA_INFO << "Failed to find " << controller;
-  }
-}
-
-void AvahiE133DiscoveryAgent::InternalRegisterService(
-    IPV4SocketAddress controller_address) {
-  ostringstream str;
-  str << "controller-" << controller_address.Port();
-  const string service = str.str();
-  str.str("");
-
-  str << "priority=" << static_cast<int>(FLAGS_controller_priority);
-
-  OLA_INFO << "Adding " << service << " : " << E133_CONTROLLER_SERVICE << ":"
-           << controller_address.Port() << ", txt: " << str.str();
-
-  string txt_data;
-  txt_data.append(1, static_cast<char>(str.str().size()));
-  txt_data.append(str.str());
-
-  DNSServiceErrorType error = DNSServiceRegister(
-      &m_registration_ref,
-      0, 0, service.c_str(), E133_CONTROLLER_SERVICE,
-      NULL,  // default domain
-      NULL,  // use default host name
-      HostToNetwork(controller_address.Port()),
-      txt_data.size(), txt_data.c_str(),
-      &RegisterCallback,  // call back function
-      NULL);  // no context
-
-  if (error != kDNSServiceErr_NoError) {
-    OLA_WARN << "DNSServiceRegister returned " << error;
-    return;
-  }
-
-  // TODO(simon): allow this to be called more than once.
-  m_io_adapter->AddDescriptor(m_registration_ref);
-}
-*/
-
 
 void AvahiE133DiscoveryAgent::StartServiceBrowser() {
   ostringstream service;
@@ -795,6 +773,7 @@ void AvahiE133DiscoveryAgent::StartServiceBrowser() {
     OLA_WARN << "Failed to start browsing for " << E133_CONTROLLER_SERVICE
              << ": " << m_client->GetLastError();
   }
+  OLA_INFO << "Started browsing for " << service.str();
 }
 
 void AvahiE133DiscoveryAgent::StopResolution() {
@@ -809,9 +788,11 @@ void AvahiE133DiscoveryAgent::StopResolution() {
 }
 
 void AvahiE133DiscoveryAgent::TriggerScopeChange() {
-  MutexLocker lock(&m_controllers_mu);
-  StopResolution();
-  m_changing_scope = false;
+  {
+    MutexLocker lock(&m_controllers_mu);
+    StopResolution();
+    m_changing_scope = false;
+  }
   StartServiceBrowser();
 }
 
@@ -820,41 +801,29 @@ void AvahiE133DiscoveryAgent::AddController(AvahiIfIndex interface,
                                             const std::string &name,
                                             const std::string &type,
                                             const std::string &domain) {
+  OLA_INFO << "(Browser) NEW: service " << name << " of type " << type
+           << " in domain " << domain << ", iface" << interface
+           << ", proto " << protocol;
+
   MutexLocker lock(&m_controllers_mu);
   if (m_changing_scope) {
     // We're in the middle of changing scopes so don't change m_controllers.
     return;
   }
 
-  ControllerResolver *controller = new ControllerResolver(
-      interface, protocol, name, type, domain);
-  delete controller;
-  /*
-  DNSServiceErrorType error = controller->StartResolution();
-  */
-  // OLA_INFO << "Starting resolution for " << *controller;
+  auto_ptr<ControllerResolver> controller(new ControllerResolver(
+      m_client.get(), interface, protocol, name, type, domain));
 
-  /*
-  if (error == kDNSServiceErr_NoError) {
-    m_controllers.push_back(controller);
-    OLA_INFO << "Added " << *controller << " at " << m_controllers.back();
-  } else {
-    OLA_WARN << "Failed to start resolution for " << *controller;
-    delete controller;
+  // We get the callback multiple times for the same
+  ControllerResolverList::iterator iter = m_controllers.begin();
+  for (; iter != m_controllers.end(); ++iter) {
+    if ((**iter) == *controller) {
+      return;
+    }
   }
-
-       We ignore the returned resolver object. In the callback
-         function we free it. If the server is terminated before
-         the callback function is called the server will free
-         the resolver for us. 
-
-      if (!(avahi_service_resolver_new(c, interface, protocol, name, type, domain, AVAHI_PROTO_UNSPEC, 0, resolve_callback, c)))
-          fprintf(stderr, "Failed to resolve service '%s': %s\n", name, avahi_strerror(avahi_client_errno(c)));
-
-      (void) interface;
-      (void) flags;
-      (void) protocol;
-  */
+  if (controller->StartResolution()) {
+    m_controllers.push_back(controller.release());
+  }
 }
 
 void AvahiE133DiscoveryAgent::RemoveController(AvahiIfIndex interface,
@@ -862,11 +831,26 @@ void AvahiE133DiscoveryAgent::RemoveController(AvahiIfIndex interface,
                                                const std::string &name,
                                                const std::string &type,
                                                const std::string &domain) {
-  OLA_WARN << "(Browser) REMOVE: service " << name << " of type " << type
-           << " in domain " << domain;
+  ControllerResolver controller(m_client.get(), interface, protocol, name,
+                                type, domain);
+  OLA_WARN << "Removing: " << controller;
 
-  (void) interface;
-  (void) protocol;
+  MutexLocker lock(&m_controllers_mu);
+
+  if (m_changing_scope) {
+    // We're in the middle of changing scopes so don't change m_controllers.
+    return;
+  }
+
+  ControllerResolverList::iterator iter = m_controllers.begin();
+  for (; iter != m_controllers.end(); ++iter) {
+    if (**iter == controller) {
+      delete *iter;
+      m_controllers.erase(iter);
+      return;
+    }
+  }
+  OLA_INFO << "Failed to find " << controller;
 }
 
 void AvahiE133DiscoveryAgent::InternalRegisterService(

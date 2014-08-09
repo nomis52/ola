@@ -236,6 +236,7 @@ Gen2Controller::Gen2Controller(const Options &options)
                       ola::NewCallback(this, &Gen2Controller::Input)) {
   E133DiscoveryAgentFactory discovery_agent_factory;
   m_discovery_agent.reset(discovery_agent_factory.New());
+  m_discovery_agent->SetScope(FLAGS_e133_scope);
 
   m_root_inflator.AddInflator(&m_e133_inflator);
   m_e133_inflator.AddInflator(&m_e133_controller_inflator);
