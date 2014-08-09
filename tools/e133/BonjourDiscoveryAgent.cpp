@@ -106,7 +106,7 @@ class ControllerResolver {
 
  private:
   class IOAdapter *m_io_adapter;
-  bool resolve_in_progress;
+  bool m_resolve_in_progress;
   DNSServiceRef m_resolve_ref;
 
   bool to_addr_in_progress;
@@ -369,7 +369,7 @@ ControllerResolver::ControllerResolver(
     const string &regtype,
     const string &reply_domain)
     : m_io_adapter(io_adapter),
-      resolve_in_progress(false),
+      m_resolve_in_progress(false),
       to_addr_in_progress(false),
       interface_index(interface_index),
       service_name(service_name),
@@ -379,7 +379,7 @@ ControllerResolver::ControllerResolver(
 }
 
 ControllerResolver::~ControllerResolver() {
-  if (resolve_in_progress) {
+  if (m_resolve_in_progress) {
     m_io_adapter->RemoveDescriptor(m_resolve_ref);
     DNSServiceRefDeallocate(m_resolve_ref);
   }
@@ -391,7 +391,7 @@ ControllerResolver::~ControllerResolver() {
 }
 
 DNSServiceErrorType ControllerResolver::StartResolution() {
-  if (resolve_in_progress) {
+  if (m_resolve_in_progress) {
     return kDNSServiceErr_NoError;
   }
 
@@ -405,7 +405,7 @@ DNSServiceErrorType ControllerResolver::StartResolution() {
       &ResolveServiceCallback,
       reinterpret_cast<void*>(this));
   if (error == kDNSServiceErr_NoError) {
-    resolve_in_progress = true;
+    m_resolve_in_progress = true;
     m_io_adapter->AddDescriptor(m_resolve_ref);
   }
   return error;
