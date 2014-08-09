@@ -86,7 +86,6 @@ class ControllerResolver {
 
  private:
   AvahiOlaClient *m_client;
-  bool m_resolve_in_progress;
   AvahiServiceResolver *m_resolver;
 
   const AvahiIfIndex m_interface_index;
@@ -212,7 +211,6 @@ ControllerResolver::ControllerResolver(AvahiOlaClient *client,
                                        const std::string &type,
                                        const std::string &domain)
     : m_client(client),
-      m_resolve_in_progress(false),
       m_resolver(NULL),
       m_interface_index(interface_index),
       m_protocol(protocol),
@@ -291,9 +289,6 @@ void ControllerResolver::ResolveEvent(AvahiResolverEvent event,
     return;
   }
 
-
-  OLA_INFO << "Got resolve event: " << ResolveEventToString(event);
-
   if (!CheckVersionMatches(txt,
                            E133DiscoveryAgentInterface::TXT_VERSION_KEY,
                            E133DiscoveryAgentInterface::TXT_VERSION)) {
@@ -331,7 +326,6 @@ void ControllerResolver::ResolveEvent(AvahiResolverEvent event,
   m_priority = static_cast<uint8_t>(priority);
   m_resolved_address = IPV4SocketAddress(
       IPV4Address(address->data.ipv4.address), port);
-  OLA_INFO << m_resolved_address;
 }
 
 bool ControllerResolver::ExtractString(AvahiStringList *txt_list,
@@ -441,7 +435,6 @@ void ControllerRegistration::RegisterOrUpdate(
 }
 
 void ControllerRegistration::GroupEvent(AvahiEntryGroupState state) {
-  OLA_INFO << "Group state changed to " << GroupStateToString(state);
   if (state == AVAHI_ENTRY_GROUP_COLLISION) {
     ChooseAlternateServiceName();
     PerformRegistration();

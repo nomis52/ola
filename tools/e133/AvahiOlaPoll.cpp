@@ -154,7 +154,7 @@ AvahiWatch* AvahiOlaPoll::WatchNew(
 
   watch->poll = this;
   watch->descriptor = new UnmanagedFileDescriptor(fd);
-  watch->registered_events = static_cast<AvahiWatchEvent>(0);
+  watch->registered_events = event;
   watch->callback = callback;
   watch->userdata = userdata;
 
@@ -224,6 +224,7 @@ void AvahiOlaPoll::WatchUpdate(AvahiWatch *watch, AvahiWatchEvent event) {
     OLA_WARN << "Attempt to update with AVAHI_WATCH_ERR or AVAHI_WATCH_HUP: "
              << static_cast<int>(event);
   }
+  watch->registered_events = event;
 }
 
 AvahiWatchEvent AvahiOlaPoll::WatchGetEvents(AvahiWatch *watch) {
