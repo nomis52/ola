@@ -36,6 +36,7 @@
 #include <ola/thread/Future.h>
 #include <stdint.h>
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <utility>
@@ -156,7 +157,6 @@ static void browse_callback(AvahiServiceBrowser *b,
 
   OLA_INFO << "In browse_callback: " << BrowseEventToString(event);
   agent->BrowseEvent(interface, protocol, event, name, type, domain, flags);
-
   (void) b;
 }
 
@@ -561,7 +561,9 @@ AvahiStringList *ControllerRegistration::BuildTxtRecord(
 // AvahiE133DiscoveryAgent
 // ----------------------------------------------------------------------------
 AvahiE133DiscoveryAgent::AvahiE133DiscoveryAgent()
-    : m_controller_browser(NULL) {
+    : m_controller_browser(NULL),
+      m_scope(DEFAULT_SCOPE),
+      m_changing_scope(false) {
 }
 
 AvahiE133DiscoveryAgent::~AvahiE133DiscoveryAgent() {
@@ -585,20 +587,28 @@ bool AvahiE133DiscoveryAgent::Stop() {
   }
 
   return true;
-
-  /*
-  if (m_registration_ref) {
-    m_io_adapter->RemoveDescriptor(m_registration_ref);
-    DNSServiceRefDeallocate(m_registration_ref);
-    m_registration_ref = NULL;
-  }
-
-  */
-  return true;
 }
 
 void AvahiE133DiscoveryAgent::SetScope(const std::string &scope) {
-  (void) scope;
+  // We need to ensure that FindControllers only returns controllers in the new
+  // scope. So we empty the list here and trigger a scope change in the DNS-SD
+  // thread.
+  MutexLocker lock(&m_controllers_mu);
+  if (m_scope == scope) {
+    return;
+  }
+
+  m_orphaned_controllers.reserve(
+      m_orphaned_controllers.size() + m_controllers.size());
+  copy(m_controllers.begin(), m_controllers.end(),
+       back_inserter(m_orphaned_controllers));
+  m_controllers.clear();
+  m_scope = scope;
+  m_changing_scope = true;
+
+  m_ss.Execute(ola::NewSingleCallback(
+      this,
+      &AvahiE133DiscoveryAgent::TriggerScopeChange));
 }
 
 void AvahiE133DiscoveryAgent::FindControllers(
@@ -629,17 +639,15 @@ void AvahiE133DiscoveryAgent::DeRegisterController(
 }
 
 void AvahiE133DiscoveryAgent::ClientStateChanged(AvahiClientState state) {
-  switch (state) {
-    case AVAHI_CLIENT_S_RUNNING:
-      // The server has started successfully and registered its host
-      // name on the network, so we can start locating the controllers.
-      LocateControllerServices();
-      break;
-    default:
-      // MutexLocker lock(&m_controllers_mu);
-      // StopResolution();
-      {}
+  if (state == AVAHI_CLIENT_S_RUNNING) {
+    // The server has started successfully and registered its host
+    // name on the network, so we can start locating the controllers.
+    StartServiceBrowser();
+    return;
   }
+
+  MutexLocker lock(&m_controllers_mu);
+  StopResolution();
 }
 
 void AvahiE133DiscoveryAgent::RunThread(ola::thread::Future<void> *future) {
@@ -654,19 +662,16 @@ void AvahiE133DiscoveryAgent::RunThread(ola::thread::Future<void> *future) {
     avahi_service_browser_free(m_controller_browser);
   }
 
-  ola::STLDeleteValues(&m_registrations);
-
-  m_client->Stop();
-  m_client.reset();
-
-  m_avahi_poll.reset();
-
-  /*
   {
     MutexLocker lock(&m_controllers_mu);
     StopResolution();
   }
-  */
+
+  ola::STLDeleteValues(&m_registrations);
+
+  m_client->Stop();
+  m_client.reset();
+  m_avahi_poll.reset();
 }
 
 void AvahiE133DiscoveryAgent::BrowseEvent(AvahiIfIndex interface,
@@ -678,20 +683,16 @@ void AvahiE133DiscoveryAgent::BrowseEvent(AvahiIfIndex interface,
                                           AvahiLookupResultFlags flags) {
   switch (event) {
     case AVAHI_BROWSER_FAILURE:
-      OLA_WARN << "(Browser) " << avahi_strerror(avahi_client_errno(
-            avahi_service_browser_get_client(m_controller_browser)));
+      OLA_WARN << "(Browser) " << m_client->GetLastError();
       return;
     case AVAHI_BROWSER_NEW:
       OLA_INFO << "(Browser) NEW: service " << name << " of type " << type
                << " in domain " << domain;
-
       AddController(interface, protocol, name, type, domain);
       break;
-
     case AVAHI_BROWSER_REMOVE:
       RemoveController(interface, protocol, name, type, domain);
       break;
-
     case AVAHI_BROWSER_ALL_FOR_NOW:
     case AVAHI_BROWSER_CACHE_EXHAUSTED:
       OLA_WARN << "(Browser) "
@@ -779,7 +780,8 @@ void AvahiE133DiscoveryAgent::InternalRegisterService(
 */
 
 
-void AvahiE133DiscoveryAgent::LocateControllerServices() {
+void AvahiE133DiscoveryAgent::StartServiceBrowser() {
+  // TODO(simon): add the scope in here!!!
   m_controller_browser = m_client->CreateServiceBrowser(
       AVAHI_IF_UNSPEC, AVAHI_PROTO_UNSPEC,
       E133_CONTROLLER_SERVICE, NULL,
@@ -790,11 +792,35 @@ void AvahiE133DiscoveryAgent::LocateControllerServices() {
   }
 }
 
+void AvahiE133DiscoveryAgent::StopResolution() {
+  // Tear down the existing resolution
+  ola::STLDeleteElements(&m_controllers);
+  ola::STLDeleteElements(&m_orphaned_controllers);
+
+  if (m_controller_browser) {
+    avahi_service_browser_free(m_controller_browser);
+    m_controller_browser = NULL;
+  }
+}
+
+void AvahiE133DiscoveryAgent::TriggerScopeChange() {
+  MutexLocker lock(&m_controllers_mu);
+  StopResolution();
+  m_changing_scope = false;
+  StartServiceBrowser();
+}
+
 void AvahiE133DiscoveryAgent::AddController(AvahiIfIndex interface,
                                             AvahiProtocol protocol,
                                             const std::string &name,
                                             const std::string &type,
                                             const std::string &domain) {
+  MutexLocker lock(&m_controllers_mu);
+  if (m_changing_scope) {
+    // We're in the middle of changing scopes so don't change m_controllers.
+    return;
+  }
+
   ControllerResolver *controller = new ControllerResolver(
       interface, protocol, name, type, domain);
 

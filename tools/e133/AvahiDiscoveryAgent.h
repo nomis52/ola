@@ -15,7 +15,7 @@
  *
  * AvahiE133DiscoveryAgent.h
  * The Avahi implementation of DiscoveryAgentInterface.
- * Copyright (C) 2013 Simon Newton
+ * Copyright (C) 2014 Simon Newton
  */
 
 #ifndef TOOLS_E133_AVAHIDISCOVERYAGENT_H_
@@ -63,7 +63,7 @@ class AvahiE133DiscoveryAgent : public E133DiscoveryAgentInterface,
   void DeRegisterController(
       const ola::network::IPV4SocketAddress &controller_address);
 
-  // Called from various callbacks
+  // Run from various callbacks.
 
   void ClientStateChanged(AvahiClientState state);
 
@@ -95,11 +95,16 @@ class AvahiE133DiscoveryAgent : public E133DiscoveryAgentInterface,
   // m_controllers_mu
   ControllerResolverList m_controllers;
   ControllerResolverList m_orphaned_controllers;
+  std::string m_scope;
+  bool m_changing_scope;
   ola::thread::Mutex m_controllers_mu;
 
   void RunThread(ola::thread::Future<void> *f);
 
-  void LocateControllerServices();
+  void StartServiceBrowser();
+  void StopResolution();  // Required m_controllers_mu to be held.
+  void TriggerScopeChange();
+
   void AddController(AvahiIfIndex interface,
                      AvahiProtocol protocol,
                      const std::string &name,

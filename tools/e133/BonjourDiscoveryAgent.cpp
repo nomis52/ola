@@ -749,6 +749,10 @@ void BonjourE133DiscoveryAgent::SetScope(const std::string &scope) {
   // scope. So we empty the list here and trigger a scope change in the DNS-SD
   // thread.
   MutexLocker lock(&m_controllers_mu);
+  if (m_scope == scope) {
+    return;
+  }
+
   m_orphaned_controllers.reserve(
       m_orphaned_controllers.size() + m_controllers.size());
   copy(m_controllers.begin(), m_controllers.end(),
