@@ -29,8 +29,8 @@
 #include <utility>
 #include <vector>
 
-#include "ola/BaseTypes.h"
 #include "ola/Callback.h"
+#include "ola/Constants.h"
 #include "ola/Logging.h"
 #include "ola/OlaCallbackClient.h"
 #include "ola/StringUtils.h"

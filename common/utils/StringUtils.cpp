@@ -56,7 +56,7 @@ void StringSplit(const string &input,
   }
 }
 
-void StringTrim(std::string *input) {
+void StringTrim(string *input) {
   string characters_to_trim = " \n\r\t";
   string::size_type start = input->find_first_not_of(characters_to_trim);
   string::size_type end = input->find_last_not_of(characters_to_trim);
@@ -142,6 +142,24 @@ bool StringToBool(const string &value, bool *output) {
   return false;
 }
 
+bool StringToBoolTolerant(const string &value, bool *output) {
+  if (StringToBool(value, output)) {
+    return true;
+  } else {
+    string lc_value(value);
+    ToLower(&lc_value);
+    if ((lc_value == "on") || (lc_value == "enable") ||
+        (lc_value == "enabled")) {
+      *output = true;
+      return true;
+    } else if ((lc_value == "off") || (lc_value == "disable") ||
+               (lc_value == "disabled")) {
+      *output = false;
+      return true;
+    }
+  }
+  return false;
+}
 
 bool StringToInt(const string &value, unsigned int *output, bool strict) {
   if (value.empty())
@@ -297,7 +315,8 @@ void ReplaceAll(string *original, const string &find, const string &replace) {
   size_t start = 0;
   while ((start = original->find(find, start)) != string::npos) {
     original->replace(start, find.length(), replace);
-    start += find.length();  // Move to the end of the replaced section
+    // Move to the end of the replaced section
+    start += ((replace.length() > find.length()) ? replace.length() : 0);
   }
 }
 

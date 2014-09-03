@@ -76,8 +76,10 @@ const char HTTPServer::CONTENT_TYPE_JS[] = "text/javascript";
 
 
 /**
- * Called by MHD_get_connection_values to add headers to a request obect.
+ * @brief Called by MHD_get_connection_values to add headers to a request
+ * object.
  * @param cls a pointer to an HTTPRequest object.
+ * @param kind the source of the key-value pair
  * @param key the header name
  * @param value the header value
  */
@@ -93,10 +95,16 @@ static int AddHeaders(void *cls, enum MHD_ValueKind kind, const char *key,
 
 
 /**
- * Called by MHD_create_post_processor to iterate over the post form data
+ * @brief Called by MHD_create_post_processor to iterate over the post form data
  * @param request_cls a pointer to a HTTPRequest object
+ * @param kind the source of the key-value pair
  * @param key the header name
+ * @param filename the name of the uploaded file or NULL if unknown
+ * @param content_type the MIME type of the data or NULL if unknown
+ * @param transfer_encoding the encoding of the data or NULL if unknown
  * @param data the header value
+ * @param off the offset of the data
+ * @param size the number of bytes available
  */
 int IteratePost(void *request_cls, enum MHD_ValueKind kind, const char *key,
                 const char *filename, const char *content_type,
@@ -117,8 +125,10 @@ int IteratePost(void *request_cls, enum MHD_ValueKind kind, const char *key,
 
 
 /**
- * Called whenever a new request is made. This sets up HTTPRequest &
- * HTTPResponse objects and then calls DispatchRequest.
+ * @brief Called whenever a new request is made.
+ *
+ * This sets up HTTPRequest & HTTPResponse objects and then calls
+ * DispatchRequest.
  */
 static int HandleRequest(void *http_server_ptr,
                          struct MHD_Connection *connection,
@@ -171,8 +181,9 @@ static int HandleRequest(void *http_server_ptr,
 
 
 /**
- * Called when a request completes. This deletes the associated HTTPRequest
- * object.
+ * @brief Called when a request completes.
+ *
+ * This deletes the associated HTTPRequest object.
  */
 void RequestCompleted(void*,
                       struct MHD_Connection*,
@@ -204,7 +215,7 @@ HTTPRequest::HTTPRequest(const string &url,
 
 
 /*
- * Initialize this request
+ * @brief Initialize this request
  * @return true if succesful, false otherwise.
  */
 bool HTTPRequest::Init() {
@@ -222,7 +233,7 @@ bool HTTPRequest::Init() {
 
 
 /*
- * Cleanup this request object
+ * @brief Cleanup this request object
  */
 HTTPRequest::~HTTPRequest() {
   if (m_processor)
@@ -231,7 +242,7 @@ HTTPRequest::~HTTPRequest() {
 
 
 /**
- * Add a header to the request object.
+ * @brief Add a header to the request object.
  * @param key the header name
  * @param value the value of the header
  */
@@ -242,8 +253,9 @@ void HTTPRequest::AddHeader(const string &key, const string &value) {
 
 
 /**
- * Add a post parameter. This can be called multiple times and the values will
- * be appended.
+ * @brief Add a post parameter.
+ *
+ * This can be called multiple times and the values will be appended.
  * @param key the parameter name
  * @param value the value
  */
@@ -260,7 +272,7 @@ void HTTPRequest::AddPostParameter(const string &key, const string &value) {
 
 
 /**
- * Process post data
+ * @brief Process post data
  */
 void HTTPRequest::ProcessPostData(const char *data, size_t *data_size) {
   MHD_post_process(m_processor, data, *data_size);
@@ -268,7 +280,7 @@ void HTTPRequest::ProcessPostData(const char *data, size_t *data_size) {
 
 
 /**
- * Return the value of the header sent with this request
+ * @brief Return the value of the header sent with this request
  * @param key the name of the header
  * @returns the value of the header or empty string if it doesn't exist.
  */
@@ -283,7 +295,7 @@ const string HTTPRequest::GetHeader(const string &key) const {
 
 
 /**
- * Return the value of a url parameter
+ * @brief Return the value of a url parameter
  * @param key the name of the parameter
  * @return the value of the parameter
  */
@@ -298,7 +310,7 @@ const string HTTPRequest::GetParameter(const string &key) const {
 }
 
 /**
- * Return whether an url parameter exists
+ * @brief Return whether an url parameter exists
  * @param key the name of the parameter
  * @return if the parameter exists
  */
@@ -321,7 +333,7 @@ bool HTTPRequest::CheckParameterExists(const string &key) const {
 }
 
 /**
- * Lookup a post parameter in this request
+ * @brief Lookup a post parameter in this request
  * @param key the name of the parameter
  * @return the value of the parameter or the empty string if it doesn't exist
  */
@@ -336,7 +348,7 @@ const string HTTPRequest::GetPostParameter(const string &key) const {
 
 
 /**
- * Set the content-type header
+ * @brief Set the content-type header
  * @param type the content type
  * @return true if the header was set correctly, false otherwise
  */
@@ -346,7 +358,7 @@ void HTTPResponse::SetContentType(const string &type) {
 
 
 /**
- * Set the appropriate headers so this response isn't cached
+ * @brief Set the appropriate headers so this response isn't cached
  */
 void HTTPResponse::SetNoCache() {
   SetHeader(MHD_HTTP_HEADER_CACHE_CONTROL, "no-cache, must-revalidate");
@@ -354,7 +366,7 @@ void HTTPResponse::SetNoCache() {
 
 
 /**
- * Set a header in the response
+ * @brief Set a header in the response
  * @param key the header name
  * @param value the header value
  * @return true if the header was set correctly, false otherwise
@@ -366,7 +378,7 @@ void HTTPResponse::SetHeader(const string &key, const string &value) {
 
 
 /**
- * Send a JsonObject as the response.
+ * @brief Send a JsonObject as the response.
  * @return true on success, false on error
  */
 int HTTPResponse::SendJson(const JsonValue &json) {
@@ -388,7 +400,7 @@ int HTTPResponse::SendJson(const JsonValue &json) {
 
 
 /**
- * Send the HTTP response
+ * @brief Send the HTTP response
  * @return true on success, false on error
  */
 int HTTPResponse::Send() {
@@ -409,7 +421,7 @@ int HTTPResponse::Send() {
 
 
 /**
- * Setup the HTTP server.
+ * @brief Setup the HTTP server.
  * @param options the configuration options for the server
  */
 HTTPServer::HTTPServer(const HTTPServerOptions &options)
@@ -422,7 +434,7 @@ HTTPServer::HTTPServer(const HTTPServerOptions &options)
 
 
 /**
- * Destroy this object
+ * @brief Destroy this object
  */
 HTTPServer::~HTTPServer() {
   Stop();
@@ -444,7 +456,7 @@ HTTPServer::~HTTPServer() {
 
 
 /**
- * Setup the HTTP server
+ * @brief Setup the HTTP server
  * @return true on success, false on failure
  */
 bool HTTPServer::Init() {
@@ -472,7 +484,7 @@ bool HTTPServer::Init() {
 
 
 /**
- * The entry point into the new thread
+ * @brief The entry point into the new thread
  */
 void *HTTPServer::Run() {
   if (!m_httpd) {
@@ -489,16 +501,15 @@ void *HTTPServer::Run() {
   // clean up any remaining sockets
   SocketSet::iterator iter = m_sockets.begin();
   for (; iter != m_sockets.end(); ++iter) {
-    m_select_server.RemoveReadDescriptor(*iter);
-    m_select_server.RemoveWriteDescriptor(*iter);
-    delete *iter;
+    FreeSocket(*iter);
   }
+  m_sockets.clear();
   return NULL;
 }
 
 
 /**
- * Stop the HTTP server
+ * @brief Stop the HTTP server
  */
 void HTTPServer::Stop() {
   if (IsRunning()) {
@@ -512,7 +523,7 @@ void HTTPServer::Stop() {
 
 
 /**
- * This is run every loop iteration to update the list of sockets in the
+ * @brief This is run every loop iteration to update the list of sockets in the
  * SelectServer from MHD.
  */
 void HTTPServer::UpdateSockets() {
@@ -544,59 +555,55 @@ void HTTPServer::UpdateSockets() {
   // FD in a more suitable way
   int i = 0;
   while (iter != m_sockets.end() && i <= max_fd) {
-    if (ola::io::ToFD((*iter)->ReadDescriptor()) < i) {
-      // this socket is no longer required so remove it
-      OLA_DEBUG << "Removing unsed socket " << (*iter)->ReadDescriptor();
-      m_select_server.RemoveReadDescriptor(*iter);
-      m_select_server.RemoveWriteDescriptor(*iter);
-      delete *iter;
+    DescriptorState *state = *iter;
+    if (ola::io::ToFD(state->descriptor->ReadDescriptor()) < i) {
+      // This socket is no longer required so remove it
+      FreeSocket(state);
       m_sockets.erase(iter++);
-    } else if (ola::io::ToFD((*iter)->ReadDescriptor()) == i) {
-      // this socket may need to be updated
-      if (FD_ISSET(i, &r_set))
-        m_select_server.AddReadDescriptor(*iter);
-      else
-        m_select_server.RemoveReadDescriptor(*iter);
+    } else if (ola::io::ToFD(state->descriptor->ReadDescriptor()) == i) {
+      // Check if this socket must be updated.
+      if (FD_ISSET(i, &r_set) && state->read == 0) {
+        m_select_server.AddReadDescriptor(state->descriptor);
+        state->read = 1;
+      } else if ((!FD_ISSET(i, &r_set)) && state->read == 1) {
+        m_select_server.RemoveReadDescriptor(state->descriptor);
+        state->read = 0;
+      }
 
-      if (FD_ISSET(i, &w_set))
-        m_select_server.AddWriteDescriptor(*iter);
-      else
-        m_select_server.RemoveWriteDescriptor(*iter);
+      if (FD_ISSET(i, &w_set) && state->write == 0) {
+        m_select_server.AddWriteDescriptor(state->descriptor);
+        state->write = 1;
+      } else if ((!FD_ISSET(i, &w_set)) && state->write == 1) {
+        m_select_server.RemoveWriteDescriptor(state->descriptor);
+        state->write = 0;
+      }
       iter++;
       i++;
     } else {
       // this is a new socket
       if (FD_ISSET(i, &r_set) || FD_ISSET(i, &w_set)) {
-        OLA_DEBUG << "Adding new socket " << i;
-        UnmanagedFileDescriptor *socket = NewSocket(&r_set, &w_set, i);
-        m_sockets.insert(socket);
+        InsertSocket(FD_ISSET(i, &r_set), FD_ISSET(i, &w_set), i);
       }
       i++;
     }
   }
 
   while (iter != m_sockets.end()) {
-    OLA_DEBUG << "Removing " << (*iter)->ReadDescriptor() <<
-      " as it's not longer needed";
-    m_select_server.RemoveWriteDescriptor(*iter);
-    m_select_server.RemoveReadDescriptor(*iter);
-    delete *iter;
+    FreeSocket(*iter);
     m_sockets.erase(iter++);
   }
 
   for (; i <= max_fd; i++) {
     // add the remaining sockets to the SS
     if (FD_ISSET(i, &r_set) || FD_ISSET(i, &w_set)) {
-      OLA_DEBUG << "Adding " << i << " as a new socket";
-      UnmanagedFileDescriptor *socket = NewSocket(&r_set, &w_set, i);
-      m_sockets.insert(socket);
+      InsertSocket(FD_ISSET(i, &r_set), FD_ISSET(i, &w_set), i);
     }
   }
 }
 
 
 /**
- * Call the appropriate handler.
+ * @brief Call the appropriate handler.
  */
 int HTTPServer::DispatchRequest(const HTTPRequest *request,
                                 HTTPResponse *response) {
@@ -620,7 +627,7 @@ int HTTPServer::DispatchRequest(const HTTPRequest *request,
 
 
 /**
- * Register a handler
+ * @brief Register a handler
  * @param path the url to respond on
  * @param handler the Closure to call for this request. These will be freed
  * once the HTTPServer is destroyed.
@@ -637,7 +644,7 @@ bool HTTPServer::RegisterHandler(const string &path,
 
 
 /**
- * Register a static file. The root of the URL corresponds to the data dir.
+ * @brief Register a static file. The root of the URL corresponds to the data dir.
  * @param path the URL path for the file e.g. '/foo.png'
  * @param content_type the content type.
  */
@@ -652,7 +659,7 @@ bool HTTPServer::RegisterFile(const std::string &path,
 
 
 /**
- * Register a static file
+ * @brief Register a static file
  * @param path the path to serve on e.g. /foo.png
  * @param file the path to the file to serve relative to the data dir e.g.
  * images/foo.png
@@ -680,7 +687,7 @@ bool HTTPServer::RegisterFile(const std::string &path,
 
 
 /**
- * Set the default handler.
+ * @brief Set the default handler.
  * @param handler the default handler to call. This will be freed when the
  * HTTPServer is destroyed.
  */
@@ -690,7 +697,7 @@ void HTTPServer::RegisterDefaultHandler(BaseHTTPCallback *handler) {
 
 
 /**
- * Return a list of all handlers registered
+ * @brief Return a list of all handlers registered
  */
 void HTTPServer::Handlers(vector<string> *handlers) const {
   map<string, BaseHTTPCallback*>::const_iterator iter;
@@ -704,7 +711,7 @@ void HTTPServer::Handlers(vector<string> *handlers) const {
 }
 
 /**
- * Serve an error.
+ * @brief Serve an error.
  * @param response the reponse to use.
  * @param details the error description
  */
@@ -723,7 +730,7 @@ int HTTPServer::ServeError(HTTPResponse *response, const string &details) {
 }
 
 /**
- * Serve a 404
+ * @brief Serve a 404
  * @param response the response to use
  */
 int HTTPServer::ServeNotFound(HTTPResponse *response) {
@@ -736,7 +743,7 @@ int HTTPServer::ServeNotFound(HTTPResponse *response) {
 }
 
 /**
- * Serve a redirect
+ * @brief Serve a redirect
  * @param response the response to use
  * @param location the location to redirect to
  */
@@ -751,7 +758,7 @@ int HTTPServer::ServeRedirect(HTTPResponse *response, const string &location) {
 }
 
 /**
- * Return the contents of a file
+ * @brief Return the contents of a file
  */
 int HTTPServer::ServeStaticContent(const std::string &path,
                                    const std::string &content_type,
@@ -764,7 +771,7 @@ int HTTPServer::ServeStaticContent(const std::string &path,
 
 
 /**
- * Serve static content.
+ * @brief Serve static content.
  * @param file_info details on the file to server
  * @param response the response to use
  */
@@ -811,10 +818,7 @@ int HTTPServer::ServeStaticContent(static_file_info *file_info,
   return ret;
 }
 
-
-UnmanagedFileDescriptor *HTTPServer::NewSocket(fd_set *r_set,
-                                               fd_set *w_set,
-                                               int fd) {
+void HTTPServer::InsertSocket(bool is_readable, bool is_writeable, int fd) {
 #ifdef _WIN32
   UnmanagedSocketDescriptor *socket = new UnmanagedSocketDescriptor(fd);
 #else
@@ -823,12 +827,31 @@ UnmanagedFileDescriptor *HTTPServer::NewSocket(fd_set *r_set,
   socket->SetOnData(NewCallback(this, &HTTPServer::HandleHTTPIO));
   socket->SetOnWritable(NewCallback(this, &HTTPServer::HandleHTTPIO));
 
-  if (FD_ISSET(fd, r_set))
-    m_select_server.AddReadDescriptor(socket);
+  DescriptorState *state = new DescriptorState(socket);
 
-  if (FD_ISSET(fd, w_set))
-    m_select_server.AddWriteDescriptor(socket);
-  return socket;
+  if (is_readable) {
+    m_select_server.AddReadDescriptor(state->descriptor);
+    state->read = 1;
+  }
+
+  if (is_writeable) {
+    state->write = 1;
+    m_select_server.AddWriteDescriptor(state->descriptor);
+  }
+
+  m_sockets.insert(state);
+}
+
+void HTTPServer::FreeSocket(DescriptorState *state) {
+  if (state->read) {
+    m_select_server.RemoveReadDescriptor(state->descriptor);
+  }
+
+  if (state->write) {
+    m_select_server.RemoveWriteDescriptor(state->descriptor);
+  }
+  delete state->descriptor;
+  delete state;
 }
 }  // namespace http
 }  // namespace ola
