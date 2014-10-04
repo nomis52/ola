@@ -33,8 +33,9 @@
 #include "tools/e133/AvahiDiscoveryAgent.h"
 #endif
 
+// TODO(simon): change to _rdmnet-ctrl._tcp once finalized
 const char E133DiscoveryAgentInterface::E133_CONTROLLER_SERVICE[] =
-    "_rdmnet-ctrl._tcp";
+    " _draft-e133-cntrl._tcp";
 
 const char E133DiscoveryAgentInterface::DEFAULT_SCOPE[] = "default";
 
