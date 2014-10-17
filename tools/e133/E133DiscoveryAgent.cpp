@@ -35,7 +35,10 @@
 
 // TODO(simon): change to _rdmnet-ctrl._tcp once finalized
 const char E133DiscoveryAgentInterface::E133_CONTROLLER_SERVICE[] =
-    " _draft-e133-cntrl._tcp";
+    "_draft-e133-cntrl._tcp";
+
+const char E133DiscoveryAgentInterface::E133_DISTRIBUTOR_SERVICE[] =
+    "_draft-e133-dist._tcp";
 
 const char E133DiscoveryAgentInterface::DEFAULT_SCOPE[] = "default";
 
@@ -47,12 +50,13 @@ const char E133DiscoveryAgentInterface::SCOPE_KEY[] = "confScope";
 const char E133DiscoveryAgentInterface::TXT_VERSION_KEY[] = "txtvers";
 const char E133DiscoveryAgentInterface::UID_KEY[] = "uid";
 
-E133DiscoveryAgentInterface* E133DiscoveryAgentFactory::New() {
+E133DiscoveryAgentInterface* E133DiscoveryAgentFactory::New(
+    const E133DiscoveryAgentInterface::Options &options) {
 #ifdef HAVE_DNSSD
-  return new BonjourE133DiscoveryAgent();
+  return new BonjourE133DiscoveryAgent(options);
 #endif
 #ifdef HAVE_AVAHI
-  return new AvahiE133DiscoveryAgent();
+  return new AvahiE133DiscoveryAgent(options);
 #endif
   return NULL;
 }

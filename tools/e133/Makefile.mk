@@ -43,10 +43,12 @@ endif
 # libolae133common
 # Code required by both the controller and device.
 tools_e133_libolae133common_la_SOURCES = \
-    tools/e133/E133ControllerEntry.h \
     tools/e133/E133ControllerEntry.cpp \
+    tools/e133/E133ControllerEntry.h \
     tools/e133/E133DiscoveryAgent.cpp \
     tools/e133/E133DiscoveryAgent.h \
+    tools/e133/E133DistributorEntry.cpp \
+    tools/e133/E133DistributorEntry.h \
     tools/e133/E133HealthCheckedConnection.cpp \
     tools/e133/E133HealthCheckedConnection.h \
     tools/e133/E133Receiver.cpp \
@@ -58,8 +60,14 @@ tools_e133_libolae133common_la_LIBADD = plugins/e131/e131/libolae131core.la
 
 if HAVE_DNSSD
 tools_e133_libolae133common_la_SOURCES += \
+    tools/e133/BonjourDiscoveryAgent.cpp \
     tools/e133/BonjourDiscoveryAgent.h \
-    tools/e133/BonjourDiscoveryAgent.cpp
+    tools/e133/BonjourIOAdapter.cpp \
+    tools/e133/BonjourIOAdapter.h \
+    tools/e133/BonjourRegistration.cpp \
+    tools/e133/BonjourRegistration.h \
+    tools/e133/BonjourResolver.cpp \
+    tools/e133/BonjourResolver.h
 endif
 
 if HAVE_AVAHI
@@ -123,11 +131,12 @@ tools_e133_libolae133device_la_LIBADD = \
 # PROGRAMS
 ##################################################
 noinst_PROGRAMS += \
-    tools/e133/gen2_controller \
-    tools/e133/gen2_device \
     tools/e133/e133_controller \
     tools/e133/e133_monitor \
     tools/e133/e133_receiver \
+    tools/e133/gen2_controller \
+    tools/e133/gen2_device \
+    tools/e133/gen2_distributor \
     tools/e133/slp_locate \
     tools/e133/slp_register \
     tools/e133/slp_sa_test
@@ -187,6 +196,12 @@ tools_e133_gen2_device_LDADD = common/libolacommon.la \
                                plugins/e131/e131/libolaacn.la \
                                tools/e133/libolae133common.la \
                                tools/e133/libolae133device.la
+
+tools_e133_gen2_distributor_SOURCES = tools/e133/gen2-distributor.cpp
+tools_e133_gen2_distributor_LDADD = common/libolacommon.la \
+                                    plugins/e131/e131/libolaacn.la \
+                                    tools/e133/libolae133common.la \
+                                    tools/e133/libolae133controller.la
 
 # TESTS
 ##################################################

@@ -56,7 +56,8 @@ The fact that SLP uses a reserved port (427) means it can't work with mobile
 OSs like iOS and Android. In Nov 2013 the task group started considering using
 DNS-SD instead. We also reversed the discovery model, rather than controllers
 discovering devices, the devices would discover the controllers and open a TCP
-connection to one of them.
+connection to one of them. Distributors are a new component that allows system
+scalability.
 
 ## gen2_device
 
@@ -70,6 +71,11 @@ It also responds to RDMNet commands send via UDP.
 
 The --controller-address argument can be used to override DNS-SD and connect to
 a single controller.
+
+## gen2_distributor
+
+Advertises using DNS-SD, waits for controllers to connect. Maintains a UID to
+IP:port mapping.
 
 ## gen2_controller
 

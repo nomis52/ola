@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "tools/e133/E133ControllerEntry.h"
+#include "tools/e133/E133DistributorEntry.h"
 
 /**
  * @brief The interface to E1.33 DNS-SD operations like register, browse etc.
@@ -44,6 +45,16 @@
  */
 class E133DiscoveryAgentInterface {
  public:
+  struct Options {
+    bool include_controllers;
+    bool include_distributors;
+
+    Options()
+        : include_controllers(true),
+          include_distributors(false) {
+    }
+  };
+
   virtual ~E133DiscoveryAgentInterface() {}
 
   /**
@@ -101,7 +112,37 @@ class E133DiscoveryAgentInterface {
   virtual void DeRegisterController(
       const ola::network::IPV4SocketAddress &controller_address) = 0;
 
+  /**
+   * @brief Get a list of the known distributors.
+   * @param[out] distributors A vector to be populated with the known
+   *   distributors.
+   */
+  virtual void FindDistributors(DistributorEntryList *distributors) = 0;
+
+  /**
+   * @brief Register the SocketAddress as an E1.33 distributor.
+   * @param distributor The distributor entry to register in DNS-SD.
+   *
+   * If this is called twice with a distributor with the same IPV4SocketAddress
+   * the TXT field will be updated with the newer values.
+   *
+   * Registration may be performed in a separate thread.
+   */
+  virtual void RegisterDistributor(const E133DistributorEntry &distributor) = 0;
+
+  /**
+   * @brief De-Register the SocketAddress as an E1.33 distributor.
+   * @param distributor_address The SocketAddress to de-register. This should be
+   * the same as what was in the E133DistributorEntry that was passed to
+   * RegisterDistributor().
+   *
+   * DeRegistration may be performed in a separate thread.
+   */
+  virtual void DeRegisterDistributor(
+      const ola::network::IPV4SocketAddress &distributor_address) = 0;
+
   static const char E133_CONTROLLER_SERVICE[];
+  static const char E133_DISTRIBUTOR_SERVICE[];
   static const char DEFAULT_SCOPE[];
 
   static const char E133_VERSION_KEY[];
@@ -130,7 +171,8 @@ class E133DiscoveryAgentFactory {
    * This returns a DiscoveryAgent appropriate for the platform. It can
    * either be a BonjourDiscoveryAgent or a AvahiDiscoveryAgent.
    */
-  E133DiscoveryAgentInterface* New();
+  E133DiscoveryAgentInterface* New(
+      const E133DiscoveryAgentInterface::Options &options);
 
  private:
   DISALLOW_COPY_AND_ASSIGN(E133DiscoveryAgentFactory);
